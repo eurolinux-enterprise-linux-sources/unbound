@@ -1,0 +1,38 @@
+From daf4ce21eb57c8ab7afc74d6cb6c60a57c5187d5 Mon Sep 17 00:00:00 2001
+From: Tomas Hozza <thozza@redhat.com>
+Date: Wed, 6 Jan 2016 15:54:13 +0100
+Subject: [PATCH] Fix use after free
+
+http://cov01.lab.eng.brq.redhat.com/covscanhub/waiving/11718/41492/#defects
+Signed-off-by: Tomas Hozza <thozza@redhat.com>
+---
+ validator/val_neg.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/validator/val_neg.c b/validator/val_neg.c
+index eec2eb1..83f0df5 100644
+--- a/validator/val_neg.c
++++ b/validator/val_neg.c
+@@ -494,8 +494,8 @@ static struct val_neg_zone* neg_zone_chain(
+ 			struct val_neg_zone* p=first, *np;
+ 			while(p) {
+ 				np = p->parent;
+-				free(p);
+ 				free(p->name);
++				free(p);
+ 				p = np;
+ 			}
+ 			return NULL;
+@@ -640,8 +640,8 @@ static struct val_neg_data* neg_data_chain(
+ 			struct val_neg_data* p = first, *np;
+ 			while(p) {
+ 				np = p->parent;
+-				free(p);
+ 				free(p->name);
++				free(p);
+ 				p = np;
+ 			}
+ 			return NULL;
+-- 
+2.4.3
+
