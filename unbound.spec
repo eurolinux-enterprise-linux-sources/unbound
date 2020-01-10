@@ -11,7 +11,7 @@
 Summary: Validating, recursive, and caching DNS(SEC) resolver
 Name: unbound
 Version: 1.4.20
-Release: 23%{?dist}.3
+Release: 23%{?dist}.4
 License: BSD
 Url: http://www.nlnetlabs.nl/unbound/
 Source: http://www.unbound.net/downloads/%{name}-%{version}.tar.gz
@@ -36,6 +36,7 @@ Patch2: unbound-1.4.20-streamtcp-manpage.patch
 Patch3: unbound-1.4.20-coverity_scan.patch
 Patch4: unbound-1.14.20-CVE-2014-8602.patch
 Patch5: unbound-1.4.20-coverity_scan-2.patch
+Patch6: unbound-1.4.20-trust-anchor.patch
 
 Group: System Environment/Daemons
 BuildRequires: flex, openssl-devel , ldns-devel >= 1.6.13
@@ -114,6 +115,7 @@ Python modules and extensions for unbound
 %patch3 -p1
 %patch4 -p0
 %patch5 -p1
+%patch6 -p1 -b .root-anchor
 
 %build
 %configure  --with-ldns --with-libevent --with-pthreads --with-ssl \
@@ -238,6 +240,7 @@ install -p -m 0644 %{SOURCE16}  .
 %{_sysconfdir}/%{name}/icannbundle.pem
 %attr(0644,root,root) %{_sysconfdir}/cron.d/unbound-anchor
 %attr(0755,unbound,unbound) %dir %{_sharedstatedir}/%{name}
+# this file will be modified always after installation
 %attr(0644,unbound,unbound) %config(noreplace) %{_sharedstatedir}/%{name}/root.key
 %attr(0644,root,root) %config(noreplace) %{_sysconfdir}/%{name}/root.key
 %attr(0644,root,root) %config(noreplace) %{_sysconfdir}/%{name}/dlv.isc.org.key
@@ -254,6 +257,18 @@ useradd -r -g unbound -d %{_sysconfdir}/unbound -s /sbin/nologin \
 
 %post libs 
 /sbin/ldconfig
+# If update contains new keys not already in database, use package keys
+if [ "$1" -eq 2 -a -f %{_sharedstatedir}/unbound/root.key.rpmnew ]; then
+        /sbin/runuser --command="
+	cp -pf %{_sharedstatedir}/unbound/root.key %{_sharedstatedir}/unbound/root.key.rpmupdate && \
+	sed -e 's/;.*//' -e '/^[[:space:]]*$/ d' %{_sharedstatedir}/unbound/root.key.rpmnew | while read KEY;
+	do
+		if ! grep -q \"\$KEY\" %{_sharedstatedir}/unbound/root.key.rpmupdate; then
+			echo \"\$KEY\" >> %{_sharedstatedir}/unbound/root.key.rpmupdate || exit 1;
+		fi;
+	done && \
+	mv %{_sharedstatedir}/unbound/root.key.rpmupdate %{_sharedstatedir}/unbound/root.key" --shell /bin/sh unbound || :
+fi
 /sbin/runuser --command="%{_sbindir}/unbound-anchor -a %{_sharedstatedir}/unbound/root.key -c %{_sysconfdir}/unbound/icannbundle.pem"  --shell /bin/sh unbound || exit 0
 
 %preun
@@ -270,6 +285,11 @@ fi
 %postun libs -p /sbin/ldconfig
 
 %changelog
+* Wed May 24 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-23.4
+- Update trust anchors (#1458345)
+- Update managed keys from trigger
+- Fix periodic updates of root.key
+
 * Thu Jan 07 2016 Tomas Hozza <thozza@redhat.com> - 1.4.20-23.3
 - Fixed 2 errors found by Static analysis of code (#1296229)
 
