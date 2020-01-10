@@ -1,0 +1,113 @@
+commit c5bf2cf802411e112f0ade9854dc650cfd81c96b
+Author: Wouter Wijngaards <wouter@nlnetlabs.nl>
+Date:   Fri Jul 4 07:34:58 2014 +0000
+
+    - Fix #593: segfault or crash upon rotating logfile.
+    
+    
+    git-svn-id: file:///svn/unbound/trunk@3156 be551aaa-1e26-0410-a405-d3ace91eadb9
+
+https://github.com/NLnetLabs/unbound/commit/c5bf2cf802411e112f0ade9854dc650cfd81c96b
+---
+
+diff -up unbound-1.4.20/util/log.c.bz1655929 unbound-1.4.20/util/log.c
+--- unbound-1.4.20/util/log.c.bz1655929	2018-12-18 16:15:57.514937196 +0100
++++ unbound-1.4.20/util/log.c	2018-12-18 16:23:26.446509050 +0100
+@@ -66,6 +66,8 @@ static FILE* logfile = 0;
+ static int key_created = 0;
+ /** pthread key for thread ids in logfile */
+ static ub_thread_key_t logkey;
++/** pthread mutex to protect FILE* */
++static lock_quick_t log_lock;
+ /** the identity of this executable/process */
+ static const char* ident="unbound";
+ #if defined(HAVE_SYSLOG_H) || defined(UB_ON_WINDOWS)
+@@ -84,14 +86,19 @@ log_init(const char* filename, int use_s
+ 	if(!key_created) {
+ 		key_created = 1;
+ 		ub_thread_key_create(&logkey, NULL);
++		lock_quick_init(&log_lock);
+ 	}
++	lock_quick_lock(&log_lock);
+ 	if(logfile 
+ #if defined(HAVE_SYSLOG_H) || defined(UB_ON_WINDOWS)
+ 	|| logging_to_syslog
+ #endif
+-	)
+-	verbose(VERB_QUERY, "switching log to %s", 
+-		use_syslog?"syslog":(filename&&filename[0]?filename:"stderr"));
++	) {
++		lock_quick_unlock(&log_lock); /* verbose() needs the lock */
++		verbose(VERB_QUERY, "switching log to %s", 
++			use_syslog?"syslog":(filename&&filename[0]?filename:"stderr"));
++		lock_quick_lock(&log_lock);
++	}
+ 	if(logfile && logfile != stderr)
+ 		fclose(logfile);
+ #ifdef HAVE_SYSLOG_H
+@@ -104,6 +111,7 @@ log_init(const char* filename, int use_s
+ 		 * chroot and no longer be able to access dev/log and so on */
+ 		openlog(ident, LOG_NDELAY, LOG_DAEMON);
+ 		logging_to_syslog = 1;
++		lock_quick_unlock(&log_lock);
+ 		return;
+ 	}
+ #elif defined(UB_ON_WINDOWS)
+@@ -112,11 +120,13 @@ log_init(const char* filename, int use_s
+ 	}
+ 	if(use_syslog) {
+ 		logging_to_syslog = 1;
++		lock_quick_unlock(&log_lock);
+ 		return;
+ 	}
+ #endif /* HAVE_SYSLOG_H */
+ 	if(!filename || !filename[0]) {
+ 		logfile = stderr;
++		lock_quick_unlock(&log_lock);
+ 		return;
+ 	}
+ 	/* open the file for logging */
+@@ -125,6 +135,7 @@ log_init(const char* filename, int use_s
+ 		filename += strlen(chrootdir);
+ 	f = fopen(filename, "a");
+ 	if(!f) {
++		lock_quick_unlock(&log_lock);
+ 		log_err("Could not open logfile %s: %s", filename, 
+ 			strerror(errno));
+ 		return;
+@@ -134,11 +145,14 @@ log_init(const char* filename, int use_s
+ 	setvbuf(f, NULL, (int)_IOLBF, 0);
+ #endif
+ 	logfile = f;
++	lock_quick_unlock(&log_lock);
+ }
+ 
+ void log_file(FILE *f)
+ {
++	lock_quick_lock(&log_lock);
+ 	logfile = f;
++	lock_quick_unlock(&log_lock);
+ }
+ 
+ void log_thread_set(int* num)
+@@ -209,7 +223,11 @@ log_vmsg(int pri, const char* type,
+ 		return;
+ 	}
+ #endif /* HAVE_SYSLOG_H */
+-	if(!logfile) return;
++	lock_quick_lock(&log_lock);
++	if(!logfile) {
++		lock_quick_unlock(&log_lock);
++		return;
++	}
+ 	if(log_now)
+ 		now = (time_t)*log_now;
+ 	else	now = (time_t)time(NULL);
+@@ -234,6 +252,7 @@ log_vmsg(int pri, const char* type,
+ 	/* line buffering does not work on windows */
+ 	fflush(logfile);
+ #endif
++	lock_quick_unlock(&log_lock);
+ }
+ 
+ /**

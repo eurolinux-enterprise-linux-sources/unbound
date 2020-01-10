@@ -11,7 +11,7 @@
 Summary: Validating, recursive, and caching DNS(SEC) resolver
 Name: unbound
 Version: 1.4.20
-Release: 23%{?dist}.4
+Release: 26%{?dist}.1
 License: BSD
 Url: http://www.nlnetlabs.nl/unbound/
 Source: http://www.unbound.net/downloads/%{name}-%{version}.tar.gz
@@ -37,6 +37,7 @@ Patch3: unbound-1.4.20-coverity_scan.patch
 Patch4: unbound-1.14.20-CVE-2014-8602.patch
 Patch5: unbound-1.4.20-coverity_scan-2.patch
 Patch6: unbound-1.4.20-trust-anchor.patch
+Patch7: unbound-race-condition-upon-log-rotation.patch
 
 Group: System Environment/Daemons
 BuildRequires: flex, openssl-devel , ldns-devel >= 1.6.13
@@ -91,6 +92,9 @@ The devel package contains the unbound library and the include files
 Summary: Libraries used by the unbound server and client applications
 Group: Applications/System
 Requires(post): /sbin/ldconfig
+Requires(post): coreutils
+Requires(post): grep
+Requires(post): sed
 Requires(postun): /sbin/ldconfig
 Requires: openssl
 Requires: crontabs
@@ -116,6 +120,7 @@ Python modules and extensions for unbound
 %patch4 -p0
 %patch5 -p1
 %patch6 -p1 -b .root-anchor
+%patch7 -p1
 
 %build
 %configure  --with-ldns --with-libevent --with-pthreads --with-ssl \
@@ -285,10 +290,18 @@ fi
 %postun libs -p /sbin/ldconfig
 
 %changelog
-* Wed May 24 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-23.4
-- Update trust anchors (#1458345)
-- Update managed keys from trigger
+* Tue Dec 18 2018 Martin Osvald <mosvald@redhat.com> - 1.4.20-26.1
+- Resolves: #1655929 - Unbound crashed when running "unbound-control log_reopen"
+
+* Tue Jun 13 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-26
 - Fix periodic updates of root.key
+
+* Fri Jun 02 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-25
+- Fix typo in post script
+
+* Wed May 24 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-24
+- Update trust anchors (#1452638)
+- Update managed keys from trigger
 
 * Thu Jan 07 2016 Tomas Hozza <thozza@redhat.com> - 1.4.20-23.3
 - Fixed 2 errors found by Static analysis of code (#1296229)
