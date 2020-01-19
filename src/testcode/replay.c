@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /**
@@ -42,12 +42,15 @@
 #include "config.h"
 /* for strtod prototype */
 #include <math.h>
+#include <ctype.h>
+#include <time.h>
 #include "util/log.h"
 #include "util/net_help.h"
 #include "util/config_file.h"
 #include "testcode/replay.h"
-#include "testcode/ldns-testpkts.h"
+#include "testcode/testpkts.h"
 #include "testcode/fake_event.h"
+#include "sldns/str2wire.h"
 
 /** max length of lines in file */
 #define MAX_LINE_LEN 10240
@@ -60,7 +63,7 @@
  * 	done (successfully).
  * @return expanded text, malloced. NULL on failure.
  */
-static char* macro_expand(rbtree_t* store, 
+static char* macro_expand(rbtree_type* store, 
 	struct replay_runtime* runtime, char** text);
 
 /** compare of time values */
@@ -127,7 +130,7 @@ strip_end_white(char* p)
 {
 	size_t i;
 	for(i = strlen(p); i > 0; i--) {
-		if(isspace((int)p[i-1]))
+		if(isspace((unsigned char)p[i-1]))
 			p[i-1] = 0;
 		else return;
 	}
@@ -138,16 +141,15 @@ strip_end_white(char* p)
  * @param remain: Rest of line (after RANGE keyword).
  * @param in: file to read from.
  * @param name: name to print in errors.
- * @param lineno: incremented as lines are read.
+ * @param pstate: read state structure with
+ * 	with lineno : incremented as lines are read.
+ * 	ttl, origin, prev for readentry.
  * @param line: line buffer.
- * @param ttl: for readentry
- * @param or: for readentry
- * @param prev: for readentry
  * @return: range object to add to list, or NULL on error.
  */
 static struct replay_range*
-replay_range_read(char* remain, FILE* in, const char* name, int* lineno, 
-	char* line, uint32_t* ttl, ldns_rdf** or, ldns_rdf** prev)
+replay_range_read(char* remain, FILE* in, const char* name,
+	struct sldns_file_parse_state* pstate, char* line)
 {
 	struct replay_range* rng = (struct replay_range*)malloc(
 		sizeof(struct replay_range));
@@ -166,21 +168,21 @@ replay_range_read(char* remain, FILE* in, const char* name, int* lineno,
 	/* read entries */
 	pos = ftello(in);
 	while(fgets(line, MAX_LINE_LEN-1, in)) {
-		(*lineno)++;
+		pstate->lineno++;
 		parse = line;
-		while(isspace((int)*parse))
+		while(isspace((unsigned char)*parse))
 			parse++;
 		if(!*parse || *parse == ';') {
 			pos = ftello(in);
 			continue;
 		}
 		if(parse_keyword(&parse, "ADDRESS")) {
-			while(isspace((int)*parse))
+			while(isspace((unsigned char)*parse))
 				parse++;
 			strip_end_white(parse);
 			if(!extstrtoaddr(parse, &rng->addr, &rng->addrlen)) {
 				log_err("Line %d: could not read ADDRESS: %s", 
-					*lineno, parse);
+					pstate->lineno, parse);
 				free(rng);
 				return NULL;
 			}
@@ -191,11 +193,11 @@ replay_range_read(char* remain, FILE* in, const char* name, int* lineno,
 			return rng;
 		}
 		/* set position before line; read entry */
-		(*lineno)--;
+		pstate->lineno--;
 		fseeko(in, pos, SEEK_SET);
-		entry = read_entry(in, name, lineno, ttl, or, prev, 1);
+		entry = read_entry(in, name, pstate, 1);
 		if(!entry)
-			fatal_exit("%d: bad entry", *lineno);
+			fatal_exit("%d: bad entry", pstate->lineno);
 		entry->next = NULL;
 		if(last)
 			last->next = entry;
@@ -258,15 +260,13 @@ read_assign_step(char* remain, struct replay_moment* mom)
  * @param remain: Rest of line (after STEP keyword).
  * @param in: file to read from.
  * @param name: name to print in errors.
- * @param lineno: incremented as lines are read.
- * @param ttl: for readentry
- * @param or: for readentry
- * @param prev: for readentry
+ * @param pstate: with lineno, ttl, origin, prev for parse state.
+ * 	lineno is incremented.
  * @return: range object to add to list, or NULL on error.
  */
 static struct replay_moment*
-replay_moment_read(char* remain, FILE* in, const char* name, int* lineno, 
-	uint32_t* ttl, ldns_rdf** or, ldns_rdf** prev)
+replay_moment_read(char* remain, FILE* in, const char* name,
+	struct sldns_file_parse_state* pstate)
 {
 	struct replay_moment* mom = (struct replay_moment*)malloc(
 		sizeof(struct replay_moment));
@@ -276,12 +276,12 @@ replay_moment_read(char* remain, FILE* in, const char* name, int* lineno,
 		return NULL;
 	memset(mom, 0, sizeof(*mom));
 	if(sscanf(remain, " %d%n", &mom->time_step, &skip) != 1) {
-		log_err("%d: cannot read number: %s", *lineno, remain);
+		log_err("%d: cannot read number: %s", pstate->lineno, remain);
 		free(mom);
 		return NULL;
 	}
 	remain += skip;
-	while(isspace((int)*remain))
+	while(isspace((unsigned char)*remain))
 		remain++;
 	if(parse_keyword(&remain, "NOTHING")) {
 		mom->evt_type = repevt_nothing;
@@ -303,10 +303,10 @@ replay_moment_read(char* remain, FILE* in, const char* name, int* lineno,
 		mom->evt_type = repevt_timeout;
 	} else if(parse_keyword(&remain, "TIME_PASSES")) {
 		mom->evt_type = repevt_time_passes;
-		while(isspace((int)*remain))
+		while(isspace((unsigned char)*remain))
 			remain++;
 		if(parse_keyword(&remain, "EVAL")) {
-			while(isspace((int)*remain))
+			while(isspace((unsigned char)*remain))
 				remain++;
 			mom->string = strdup(remain);
 			if(!mom->string) fatal_exit("out of memory");
@@ -316,13 +316,13 @@ replay_moment_read(char* remain, FILE* in, const char* name, int* lineno,
 		}
 	} else if(parse_keyword(&remain, "CHECK_AUTOTRUST")) {
 		mom->evt_type = repevt_autotrust_check;
-		while(isspace((int)*remain))
+		while(isspace((unsigned char)*remain))
 			remain++;
 		if(strlen(remain)>0 && remain[strlen(remain)-1]=='\n')
 			remain[strlen(remain)-1] = 0;
 		mom->autotrust_id = strdup(remain);
 		if(!mom->autotrust_id) fatal_exit("out of memory");
-		read_file_content(in, lineno, mom);
+		read_file_content(in, &pstate->lineno, mom);
 	} else if(parse_keyword(&remain, "ERROR")) {
 		mom->evt_type = repevt_error;
 	} else if(parse_keyword(&remain, "TRAFFIC")) {
@@ -333,20 +333,20 @@ replay_moment_read(char* remain, FILE* in, const char* name, int* lineno,
 	} else if(parse_keyword(&remain, "INFRA_RTT")) {
 		char *s, *m;
 		mom->evt_type = repevt_infra_rtt;
-		while(isspace((int)*remain))
+		while(isspace((unsigned char)*remain))
 			remain++;
 		s = remain;
 		remain = strchr(s, ' ');
 		if(!remain) fatal_exit("expected three args for INFRA_RTT");
 		remain[0] = 0;
 		remain++;
-		while(isspace((int)*remain))
+		while(isspace((unsigned char)*remain))
 			remain++;
 		m = strchr(remain, ' ');
 		if(!m) fatal_exit("expected three args for INFRA_RTT");
 		m[0] = 0;
 		m++;
-		while(isspace((int)*m))
+		while(isspace((unsigned char)*m))
 			m++;
 		if(!extstrtoaddr(s, &mom->addr, &mom->addrlen))
 			fatal_exit("bad infra_rtt address %s", s);
@@ -357,20 +357,20 @@ replay_moment_read(char* remain, FILE* in, const char* name, int* lineno,
 		if(!mom->string) fatal_exit("out of memory");
 		if(!mom->variable) fatal_exit("out of memory");
 	} else {
-		log_err("%d: unknown event type %s", *lineno, remain);
+		log_err("%d: unknown event type %s", pstate->lineno, remain);
 		free(mom);
 		return NULL;
 	}
-	while(isspace((int)*remain))
+	while(isspace((unsigned char)*remain))
 		remain++;
 	if(parse_keyword(&remain, "ADDRESS")) {
-		while(isspace((int)*remain))
+		while(isspace((unsigned char)*remain))
 			remain++;
 		if(strlen(remain) > 0) /* remove \n */
 			remain[strlen(remain)-1] = 0;
 		if(!extstrtoaddr(remain, &mom->addr, &mom->addrlen)) {
 			log_err("line %d: could not parse ADDRESS: %s", 
-				*lineno, remain);
+				pstate->lineno, remain);
 			free(mom);
 			return NULL;
 		}
@@ -381,7 +381,7 @@ replay_moment_read(char* remain, FILE* in, const char* name, int* lineno,
 		sec = strtod(remain, &remain);
 		if(sec == 0. && errno != 0) {
 			log_err("line %d: could not parse ELAPSE: %s (%s)", 
-				*lineno, remain, strerror(errno));
+				pstate->lineno, remain, strerror(errno));
 			free(mom);
 			return NULL;
 		}
@@ -393,7 +393,7 @@ replay_moment_read(char* remain, FILE* in, const char* name, int* lineno,
 	} 
 
 	if(readentry) {
-		mom->match = read_entry(in, name, lineno, ttl, or, prev, 1);
+		mom->match = read_entry(in, name, pstate, 1);
 		if(!mom->match) {
 			free(mom);
 			return NULL;
@@ -408,7 +408,7 @@ static struct replay_scenario*
 make_scenario(char* line)
 {
 	struct replay_scenario* scen;
-	while(isspace((int)*line))
+	while(isspace((unsigned char)*line))
 		line++;
 	if(!*line) {
 		log_err("scenario: no title given");
@@ -432,15 +432,17 @@ replay_scenario_read(FILE* in, const char* name, int* lineno)
 	char line[MAX_LINE_LEN];
 	char *parse;
 	struct replay_scenario* scen = NULL;
-	uint32_t ttl = 3600;
-	ldns_rdf* or = NULL;
-	ldns_rdf* prev = NULL;
+	struct sldns_file_parse_state pstate;
 	line[MAX_LINE_LEN-1]=0;
+	memset(&pstate, 0, sizeof(pstate));
+	pstate.default_ttl = 3600;
+	pstate.lineno = *lineno;
 
 	while(fgets(line, MAX_LINE_LEN-1, in)) {
 		parse=line;
+		pstate.lineno++;
 		(*lineno)++;
-		while(isspace((int)*parse))
+		while(isspace((unsigned char)*parse))
 			parse++;
 		if(!*parse) 
 			continue; /* empty line */
@@ -456,16 +458,18 @@ replay_scenario_read(FILE* in, const char* name, int* lineno)
 			fatal_exit("%d: expected SCENARIO", *lineno);
 		if(parse_keyword(&parse, "RANGE_BEGIN")) {
 			struct replay_range* newr = replay_range_read(parse, 
-				in, name, lineno, line, &ttl, &or, &prev);
+				in, name, &pstate, line);
 			if(!newr)
-				fatal_exit("%d: bad range", *lineno);
+				fatal_exit("%d: bad range", pstate.lineno);
+			*lineno = pstate.lineno;
 			newr->next_range = scen->range_list;
 			scen->range_list = newr;
 		} else if(parse_keyword(&parse, "STEP")) {
 			struct replay_moment* mom = replay_moment_read(parse, 
-				in, name, lineno, &ttl, &or, &prev);
+				in, name, &pstate);
 			if(!mom)
-				fatal_exit("%d: bad moment", *lineno);
+				fatal_exit("%d: bad moment", pstate.lineno);
+			*lineno = pstate.lineno;
 			if(scen->mom_last && 
 				scen->mom_last->time_step >= mom->time_step)
 				fatal_exit("%d: time goes backwards", *lineno);
@@ -481,13 +485,10 @@ replay_scenario_read(FILE* in, const char* name, int* lineno)
 				p = p->mom_next;
 			}
 			log_info("Scenario has %d steps", num);
-			ldns_rdf_deep_free(or);
-			ldns_rdf_deep_free(prev);
 			return scen;
 		}
 	}
-	ldns_rdf_deep_free(or);
-	ldns_rdf_deep_free(prev);
+	log_err("scenario read failed at line %d (no SCENARIO_END?)", *lineno);
 	replay_scenario_delete(scen);
 	return NULL;
 }
@@ -499,8 +500,7 @@ replay_scenario_delete(struct replay_scenario* scen)
 	struct replay_range* rng, *rngn;
 	if(!scen)
 		return;
-	if(scen->title)
-		free(scen->title);
+	free(scen->title);
 	mom = scen->mom_first;
 	while(mom) {
 		momn = mom->mom_next;
@@ -549,7 +549,7 @@ replay_var_compare(const void* a, const void* b)
 	return strcmp(x->name, y->name);
 }
 
-rbtree_t*
+rbtree_type*
 macro_store_create(void)
 {
 	return rbtree_create(&replay_var_compare);
@@ -557,7 +557,7 @@ macro_store_create(void)
 
 /** helper function to delete macro values */
 static void
-del_macro(rbnode_t* x, void* ATTR_UNUSED(arg))
+del_macro(rbnode_type* x, void* ATTR_UNUSED(arg))
 {
 	struct replay_var* v = (struct replay_var*)x;
 	free(v->name);
@@ -566,7 +566,7 @@ del_macro(rbnode_t* x, void* ATTR_UNUSED(arg))
 }
 
 void
-macro_store_delete(rbtree_t* store)
+macro_store_delete(rbtree_type* store)
 {
 	if(!store)
 		return;
@@ -616,7 +616,7 @@ do_buf_insert(char* buf, size_t remain, char* after, char* inserted)
 
 /** do macro recursion */
 static char*
-do_macro_recursion(rbtree_t* store, struct replay_runtime* runtime,
+do_macro_recursion(rbtree_type* store, struct replay_runtime* runtime,
 	char* at, size_t remain)
 {
 	char* after = at+2;
@@ -633,7 +633,7 @@ do_macro_recursion(rbtree_t* store, struct replay_runtime* runtime,
 
 /** get var from store */
 static struct replay_var*
-macro_getvar(rbtree_t* store, char* name)
+macro_getvar(rbtree_type* store, char* name)
 {
 	struct replay_var k;
 	k.node.key = &k;
@@ -643,7 +643,7 @@ macro_getvar(rbtree_t* store, char* name)
 
 /** do macro variable */
 static char*
-do_macro_variable(rbtree_t* store, char* buf, size_t remain)
+do_macro_variable(rbtree_type* store, char* buf, size_t remain)
 {
 	struct replay_var* v;
 	char* at = buf+1;
@@ -651,7 +651,7 @@ do_macro_variable(rbtree_t* store, char* buf, size_t remain)
 	char sv;
 	if(at[0]==0)
 		return NULL; /* no variable name after $ */
-	while(*at && (isalnum((int)*at) || *at=='_')) {
+	while(*at && (isalnum((unsigned char)*at) || *at=='_')) {
 		at++;
 	}
 	/* terminator, we are working in macro_expand() buffer */
@@ -724,7 +724,7 @@ do_macro_arith(char* orig, size_t remain, char** arithstart)
 		/* remember start pos of expr, skip the first number */
 		at = orig;
 		*arithstart = at;
-		while(*at && (isdigit((int)*at) || *at == '.'))
+		while(*at && (isdigit((unsigned char)*at) || *at == '.'))
 			at++;
 		return at;
 	}
@@ -737,7 +737,7 @@ do_macro_arith(char* orig, size_t remain, char** arithstart)
 		*arithstart = NULL;
 		return do_macro_arith(orig, remain, arithstart);
 	}
-	if(isdigit((int)operator)) {
+	if(isdigit((unsigned char)operator)) {
 		*arithstart = orig;
 		return at+skip; /* do nothing, but setup for later number */
 	}
@@ -777,7 +777,7 @@ do_macro_range(char* buf)
 }
 
 static char*
-macro_expand(rbtree_t* store, struct replay_runtime* runtime, char** text)
+macro_expand(rbtree_type* store, struct replay_runtime* runtime, char** text)
 {
 	char buf[10240];
 	char* at = *text;
@@ -792,15 +792,15 @@ macro_expand(rbtree_t* store, struct replay_runtime* runtime, char** text)
 
 	/* check for functions */
 	if(strcmp(buf, "time") == 0) {
-		snprintf(buf, sizeof(buf), "%u", (unsigned)runtime->now_secs);
+		snprintf(buf, sizeof(buf), ARG_LL "d", (long long)runtime->now_secs);
 		*text += len;
 		return strdup(buf);
 	} else if(strcmp(buf, "timeout") == 0) {
-		uint32_t res = 0;
+		time_t res = 0;
 		struct fake_timer* t = first_timer(runtime);
-		if(t && (uint32_t)t->tv.tv_sec >= runtime->now_secs) 
-			res = (uint32_t)t->tv.tv_sec - runtime->now_secs;
-		snprintf(buf, sizeof(buf), "%u", (unsigned)res);
+		if(t && (time_t)t->tv.tv_sec >= runtime->now_secs) 
+			res = (time_t)t->tv.tv_sec - runtime->now_secs;
+		snprintf(buf, sizeof(buf), ARG_LL "d", (long long)res);
 		*text += len;
 		return strdup(buf);
 	} else if(strncmp(buf, "ctime ", 6) == 0 ||
@@ -820,13 +820,13 @@ macro_expand(rbtree_t* store, struct replay_runtime* runtime, char** text)
 			at = do_macro_recursion(store, runtime, at, remain);
 		} else if(*at == '$') {
 			at = do_macro_variable(store, at, remain);
-		} else if(isdigit((int)*at)) {
+		} else if(isdigit((unsigned char)*at)) {
 			at = do_macro_arith(at, remain, &arithstart);
 		} else {
 			/* copy until whitespace or operator */
-			if(*at && (isalnum((int)*at) || *at=='_')) {
+			if(*at && (isalnum((unsigned char)*at) || *at=='_')) {
 				at++;
-				while(*at && (isalnum((int)*at) || *at=='_'))
+				while(*at && (isalnum((unsigned char)*at) || *at=='_'))
 					at++;
 			} else at++;
 		}
@@ -845,7 +845,7 @@ macro_expand(rbtree_t* store, struct replay_runtime* runtime, char** text)
 }
 
 char*
-macro_process(rbtree_t* store, struct replay_runtime* runtime, char* text)
+macro_process(rbtree_type* store, struct replay_runtime* runtime, char* text)
 {
 	char buf[10240];
 	char* next, *expand;
@@ -873,14 +873,14 @@ macro_process(rbtree_t* store, struct replay_runtime* runtime, char* text)
 }
 
 char* 
-macro_lookup(rbtree_t* store, char* name)
+macro_lookup(rbtree_type* store, char* name)
 {
 	struct replay_var* x = macro_getvar(store, name);
 	if(!x) return strdup("");
 	return strdup(x->value);
 }
 
-void macro_print_debug(rbtree_t* store)
+void macro_print_debug(rbtree_type* store)
 {
 	struct replay_var* x;
 	RBTREE_FOR(x, struct replay_var*, store) {
@@ -889,7 +889,7 @@ void macro_print_debug(rbtree_t* store)
 }
 
 int 
-macro_assign(rbtree_t* store, char* name, char* value)
+macro_assign(rbtree_type* store, char* name, char* value)
 {
 	struct replay_var* x = macro_getvar(store, name);
 	if(x) {
@@ -909,118 +909,127 @@ macro_assign(rbtree_t* store, char* name, char* value)
 	return x->value != NULL;
 }
 
+/* testbound assert function for selftest.  counts the number of tests */
+#define tb_assert(x) \
+	do { if(!(x)) fatal_exit("%s:%d: %s: assertion %s failed", \
+		__FILE__, __LINE__, __func__, #x); \
+		num_asserts++; \
+	} while(0);
+
 void testbound_selftest(void)
 {
 	/* test the macro store */
-	rbtree_t* store = macro_store_create();
+	rbtree_type* store = macro_store_create();
 	char* v;
 	int r;
-	log_assert(store);
+	int num_asserts = 0;
+	tb_assert(store);
 
 	v = macro_lookup(store, "bla");
-	log_assert(strcmp(v, "") == 0);
+	tb_assert(strcmp(v, "") == 0);
 	free(v);
 
 	v = macro_lookup(store, "vlerk");
-	log_assert(strcmp(v, "") == 0);
+	tb_assert(strcmp(v, "") == 0);
 	free(v);
 
 	r = macro_assign(store, "bla", "waarde1");
-	log_assert(r);
+	tb_assert(r);
 
 	v = macro_lookup(store, "vlerk");
-	log_assert(strcmp(v, "") == 0);
+	tb_assert(strcmp(v, "") == 0);
 	free(v);
 
 	v = macro_lookup(store, "bla");
-	log_assert(strcmp(v, "waarde1") == 0);
+	tb_assert(strcmp(v, "waarde1") == 0);
 	free(v);
 
 	r = macro_assign(store, "vlerk", "kanteel");
-	log_assert(r);
+	tb_assert(r);
 
 	v = macro_lookup(store, "bla");
-	log_assert(strcmp(v, "waarde1") == 0);
+	tb_assert(strcmp(v, "waarde1") == 0);
 	free(v);
 
 	v = macro_lookup(store, "vlerk");
-	log_assert(strcmp(v, "kanteel") == 0);
+	tb_assert(strcmp(v, "kanteel") == 0);
 	free(v);
 
 	r = macro_assign(store, "bla", "ww");
-	log_assert(r);
+	tb_assert(r);
 
 	v = macro_lookup(store, "bla");
-	log_assert(strcmp(v, "ww") == 0);
+	tb_assert(strcmp(v, "ww") == 0);
 	free(v);
 
-	log_assert( macro_length("}") == 1);
-	log_assert( macro_length("blabla}") == 7);
-	log_assert( macro_length("bla${zoink}bla}") == 7+8);
-	log_assert( macro_length("bla${zoink}${bla}bla}") == 7+8+6);
+	tb_assert( macro_length("}") == 1);
+	tb_assert( macro_length("blabla}") == 7);
+	tb_assert( macro_length("bla${zoink}bla}") == 7+8);
+	tb_assert( macro_length("bla${zoink}${bla}bla}") == 7+8+6);
 
 	v = macro_process(store, NULL, "");
-	log_assert( v && strcmp(v, "") == 0);
+	tb_assert( v && strcmp(v, "") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "${}");
-	log_assert( v && strcmp(v, "") == 0);
+	tb_assert( v && strcmp(v, "") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "blabla ${} dinges");
-	log_assert( v && strcmp(v, "blabla  dinges") == 0);
+	tb_assert( v && strcmp(v, "blabla  dinges") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "1${$bla}2${$bla}3");
-	log_assert( v && strcmp(v, "1ww2ww3") == 0);
+	tb_assert( v && strcmp(v, "1ww2ww3") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "it is ${ctime 123456}");
-	log_assert( v && strcmp(v, "it is Fri Jan  2 10:17:36 1970") == 0);
+	tb_assert( v && strcmp(v, "it is Fri Jan  2 10:17:36 1970") == 0);
 	free(v);
 
 	r = macro_assign(store, "t1", "123456");
-	log_assert(r);
+	tb_assert(r);
 	v = macro_process(store, NULL, "it is ${ctime ${$t1}}");
-	log_assert( v && strcmp(v, "it is Fri Jan  2 10:17:36 1970") == 0);
+	tb_assert( v && strcmp(v, "it is Fri Jan  2 10:17:36 1970") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "it is ${ctime $t1}");
-	log_assert( v && strcmp(v, "it is Fri Jan  2 10:17:36 1970") == 0);
+	tb_assert( v && strcmp(v, "it is Fri Jan  2 10:17:36 1970") == 0);
 	free(v);
 
 	r = macro_assign(store, "x", "1");
-	log_assert(r);
+	tb_assert(r);
 	r = macro_assign(store, "y", "2");
-	log_assert(r);
+	tb_assert(r);
 	v = macro_process(store, NULL, "${$x + $x}");
-	log_assert( v && strcmp(v, "2") == 0);
+	tb_assert( v && strcmp(v, "2") == 0);
 	free(v);
 	v = macro_process(store, NULL, "${$x - $x}");
-	log_assert( v && strcmp(v, "0") == 0);
+	tb_assert( v && strcmp(v, "0") == 0);
 	free(v);
 	v = macro_process(store, NULL, "${$y * $y}");
-	log_assert( v && strcmp(v, "4") == 0);
+	tb_assert( v && strcmp(v, "4") == 0);
 	free(v);
 	v = macro_process(store, NULL, "${32 / $y + $x + $y}");
-	log_assert( v && strcmp(v, "19") == 0);
+	tb_assert( v && strcmp(v, "19") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "${32 / ${$y+$y} + ${${100*3}/3}}");
-	log_assert( v && strcmp(v, "108") == 0);
+	tb_assert( v && strcmp(v, "108") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "${1 2 33 2 1}");
-	log_assert( v && strcmp(v, "1 2 33 2 1") == 0);
+	tb_assert( v && strcmp(v, "1 2 33 2 1") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "${123 3 + 5}");
-	log_assert( v && strcmp(v, "123 8") == 0);
+	tb_assert( v && strcmp(v, "123 8") == 0);
 	free(v);
 
 	v = macro_process(store, NULL, "${123 glug 3 + 5}");
-	log_assert( v && strcmp(v, "123 glug 8") == 0);
+	tb_assert( v && strcmp(v, "123 glug 8") == 0);
 	free(v);
 
 	macro_store_delete(store);
+	printf("selftest successful (%d checks).\n", num_asserts);
 }

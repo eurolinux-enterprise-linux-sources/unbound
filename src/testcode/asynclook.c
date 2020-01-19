@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /**
@@ -48,6 +48,7 @@
 #include "libunbound/context.h"
 #include "util/locks.h"
 #include "util/log.h"
+#include "sldns/rrdef.h"
 #ifdef UNBOUND_ALLOC_LITE
 #undef malloc
 #undef calloc
@@ -63,7 +64,7 @@ struct track_id {
 	/** true if cancelled */
 	int cancel;
 	/** a lock on this structure for thread safety */
-	lock_basic_t lock;
+	lock_basic_type lock;
 };
 
 /**
@@ -163,7 +164,7 @@ struct ext_thr_info {
 	/** thread num for debug */
 	int thread_num;
 	/** thread id */
-	ub_thread_t tid;
+	ub_thread_type tid;
 	/** context */
 	struct ub_ctx* ctx;
 	/** size of array to query */
@@ -334,7 +335,17 @@ ext_thread(void* arg)
 		r = ub_wait(inf->ctx);
 		checkerr("ub_ctx_wait", r);
 	}
+	/* if these locks are destroyed, or if the async_ids is freed, then
+	   a use-after-free happens in another thread.
+	   The allocation is only part of this test, though. */
+	/*
+	if(async_ids) {
+		for(i=0; i<inf->numq; i++) {
+			lock_basic_destroy(&async_ids[i].lock);
+		}
+	}
 	free(async_ids);
+	*/
 	
 	return NULL;
 }
@@ -354,7 +365,7 @@ ext_test(struct ub_ctx* ctx, int argc, char** argv)
 		inf[i].ctx = ctx;
 		inf[i].argc = argc;
 		inf[i].argv = argv;
-		inf[i].numq = 1000;
+		inf[i].numq = 100;
 		ub_thread_create(&inf[i].tid, ext_thread, &inf[i]);
 	}
 	/* the work happens here */
@@ -459,7 +470,7 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
-	/* perform asyncronous calls */
+	/* perform asynchronous calls */
 	num_wait = argc;
 	for(i=0; i<argc; i++) {
 		lookups[i].name = argv[i];

@@ -5,6 +5,7 @@ server:
 	trust-anchor: "example.net.	3600	IN	DS	30899 5 1 14188c885f20623ad1d3bec42798f3f951793e4c ; xehac-mofum-malyd-bomaf-pegit-fuzes-ganin-misiz-nigel-nozog-soxix"
 	val-override-date: "20070916134226"
 	target-fetch-policy: "0 0 0 0 0"
+	fake-sha1: yes
 
 stub-zone:
 	name: "."
@@ -426,7 +427,7 @@ ENTRY_END
 STEP 10 CHECK_ANSWER
 ENTRY_BEGIN
 MATCH all
-REPLY QR RD RA AD NOERROR
+REPLY QR RD RA AD DO NOERROR
 SECTION QUESTION
 www.down.sub.example.net. IN A
 SECTION ANSWER

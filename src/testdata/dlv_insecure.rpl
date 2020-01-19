@@ -5,6 +5,7 @@ server:
 	val-override-date: "20070916134226"
 	harden-referral-path: no
 	target-fetch-policy: "0 0 0 0 0"
+	fake-sha1: yes
 
 stub-zone:
 	name: "."
@@ -236,7 +237,7 @@ ENTRY_END
 STEP 10 CHECK_ANSWER
 ENTRY_BEGIN
 MATCH all
-REPLY QR RD RA NOERROR
+REPLY QR RD RA DO NOERROR
 SECTION QUESTION
 www.example.net. IN A
 SECTION ANSWER

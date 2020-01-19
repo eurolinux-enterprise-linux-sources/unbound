@@ -2,6 +2,7 @@
 server:
 	target-fetch-policy: "0 0 0 0 0"
 	log-time-ascii: yes
+	fake-sha1: yes
 stub-zone:
 	name: "."
 	stub-addr: 193.0.14.129         # K.ROOT-SERVERS.NET.
@@ -128,7 +129,7 @@ ENTRY_END
 STEP 20 CHECK_ANSWER
 ENTRY_BEGIN
 MATCH all
-REPLY QR RD RA AD NOERROR
+REPLY QR RD RA AD DO NOERROR
 SECTION QUESTION
 www.example.com. IN A
 SECTION ANSWER

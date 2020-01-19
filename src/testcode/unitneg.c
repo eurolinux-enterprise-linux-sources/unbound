@@ -21,16 +21,16 @@
  * specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 /**
@@ -45,6 +45,7 @@
 #include "util/data/dname.h"
 #include "testcode/unitmain.h"
 #include "validator/val_neg.h"
+#include "sldns/rrdef.h"
 
 /** verbose unit test for negative cache */
 static int negverbose = 0;
@@ -195,7 +196,7 @@ static void add_item(struct val_neg_cache* neg)
 	struct packed_rrset_data rd;
 	struct ub_packed_rrset_key nsec;
 	size_t rr_len;
-	uint32_t rr_ttl;
+	time_t rr_ttl;
 	uint8_t* rr_data;
 	char* zname = get_random_zone();
 	char* from, *to;
@@ -241,7 +242,7 @@ static void remove_item(struct val_neg_cache* neg)
 {
 	int n, i;
 	struct val_neg_data* d;
-	rbnode_t* walk;
+	rbnode_type* walk;
 	struct val_neg_zone* z;
 	
 	lock_basic_lock(&neg->lock);
@@ -323,7 +324,7 @@ static size_t sumtrees_inuse(struct val_neg_cache* neg)
 	RBTREE_FOR(z, struct val_neg_zone*, &neg->tree) {
 		/* get count of highest parent for num in use */
 		d = (struct val_neg_data*)rbtree_first(&z->tree);
-		if(d && (rbnode_t*)d!=RBTREE_NULL)
+		if(d && (rbnode_type*)d!=RBTREE_NULL)
 			res += d->count;
 	}
 	return res;

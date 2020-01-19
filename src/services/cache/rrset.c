@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /**
@@ -40,6 +40,7 @@
  */
 #include "config.h"
 #include "services/cache/rrset.h"
+#include "sldns/rrdef.h"
 #include "util/storage/slabhash.h"
 #include "util/config_file.h"
 #include "util/data/packed_rrset.h"
@@ -90,7 +91,7 @@ struct rrset_cache* rrset_cache_adjust(struct rrset_cache *r,
 
 void 
 rrset_cache_touch(struct rrset_cache* r, struct ub_packed_rrset_key* key,
-        hashvalue_t hash, rrset_id_t id)
+        hashvalue_type hash, rrset_id_type id)
 {
 	struct lruhash* table = slabhash_gettable(&r->table, hash);
 	/* 
@@ -120,7 +121,7 @@ rrset_cache_touch(struct rrset_cache* r, struct ub_packed_rrset_key* key,
 
 /** see if rrset needs to be updated in the cache */
 static int
-need_to_update_rrset(void* nd, void* cd, uint32_t timenow, int equal, int ns)
+need_to_update_rrset(void* nd, void* cd, time_t timenow, int equal, int ns)
 {
 	struct packed_rrset_data* newd = (struct packed_rrset_data*)nd;
 	struct packed_rrset_data* cached = (struct packed_rrset_data*)cd;
@@ -181,14 +182,15 @@ rrset_update_id(struct rrset_ref* ref, struct alloc_cache* alloc)
 
 int 
 rrset_cache_update(struct rrset_cache* r, struct rrset_ref* ref,
-	struct alloc_cache* alloc, uint32_t timenow)
+	struct alloc_cache* alloc, time_t timenow)
 {
 	struct lruhash_entry* e;
 	struct ub_packed_rrset_key* k = ref->key;
-	hashvalue_t h = k->entry.hash;
+	hashvalue_type h = k->entry.hash;
 	uint16_t rrset_type = ntohs(k->rk.type);
 	int equal = 0;
 	log_assert(ref->id != 0 && k->id != 0);
+	log_assert(k->rk.dname != NULL);
 	/* looks up item with a readlock - no editing! */
 	if((e=slabhash_lookup(&r->table, h, k, 0)) != 0) {
 		/* return id and key as they will be used in the cache
@@ -237,7 +239,7 @@ rrset_cache_update(struct rrset_cache* r, struct rrset_ref* ref,
 
 struct ub_packed_rrset_key* 
 rrset_cache_lookup(struct rrset_cache* r, uint8_t* qname, size_t qnamelen, 
-	uint16_t qtype, uint16_t qclass, uint32_t flags, uint32_t timenow,
+	uint16_t qtype, uint16_t qclass, uint32_t flags, time_t timenow,
 	int wr)
 {
 	struct lruhash_entry* e;
@@ -268,7 +270,7 @@ rrset_cache_lookup(struct rrset_cache* r, uint8_t* qname, size_t qnamelen,
 }
 
 int 
-rrset_array_lock(struct rrset_ref* ref, size_t count, uint32_t timenow)
+rrset_array_lock(struct rrset_ref* ref, size_t count, time_t timenow)
 {
 	size_t i;
 	for(i=0; i<count; i++) {
@@ -301,12 +303,13 @@ void
 rrset_array_unlock_touch(struct rrset_cache* r, struct regional* scratch,
 	struct rrset_ref* ref, size_t count)
 {
-	hashvalue_t* h;
+	hashvalue_type* h;
 	size_t i;
-	if(!(h = (hashvalue_t*)regional_alloc(scratch, 
-		sizeof(hashvalue_t)*count)))
+	if(count > RR_COUNT_MAX || !(h = (hashvalue_type*)regional_alloc(
+		scratch, sizeof(hashvalue_type)*count))) {
 		log_warn("rrset LRU: memory allocation failed");
-	else 	/* store hash values */
+		h = NULL;
+	} else 	/* store hash values */
 		for(i=0; i<count; i++)
 			h[i] = ref[i].key->entry.hash;
 	/* unlock */
@@ -327,7 +330,7 @@ rrset_array_unlock_touch(struct rrset_cache* r, struct regional* scratch,
 
 void 
 rrset_update_sec_status(struct rrset_cache* r, 
-	struct ub_packed_rrset_key* rrset, uint32_t now)
+	struct ub_packed_rrset_key* rrset, time_t now)
 {
 	struct packed_rrset_data* updata = 
 		(struct packed_rrset_data*)rrset->entry.data;
@@ -366,7 +369,7 @@ rrset_update_sec_status(struct rrset_cache* r,
 
 void 
 rrset_check_sec_status(struct rrset_cache* r, 
-	struct ub_packed_rrset_key* rrset, uint32_t now)
+	struct ub_packed_rrset_key* rrset, time_t now)
 {
 	struct packed_rrset_data* updata = 
 		(struct packed_rrset_data*)rrset->entry.data;

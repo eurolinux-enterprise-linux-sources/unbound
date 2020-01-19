@@ -3,6 +3,7 @@ server:
 	target-fetch-policy: "0 0 0 0 0"
 	log-time-ascii: yes
 	val-override-date: '20091018111500'
+	fake-sha1: yes
 stub-zone:
 	name: "."
 	stub-addr: 193.0.14.129         # K.ROOT-SERVERS.NET.
@@ -99,7 +100,7 @@ ENTRY_END
 STEP 30 CHECK_ANSWER
 ENTRY_BEGIN
 MATCH all
-REPLY QR RD RA NOERROR
+REPLY QR RD RA DO NOERROR
 SECTION QUESTION
 www.example.com. IN A
 SECTION ANSWER

@@ -4,6 +4,7 @@ server:
 	trust-anchor: "dlv.isc.org. 5072    IN      DNSKEY  256 3 5 BEAAAAOlYGw53D+f01yCL5JsP0SB6EjYrnd0JYRBooAaGPT+Q0kpiN+7GviFh+nIazoB8e2Yv7mupgqkmIjObdcbGstYpUltdECdNpNmBvASKB9SBdtGeRvXXpORi3Qyxb9kHGG7SpzyYbc+KDVKnzYHB94pvqu3ZZpPFPBFtCibp/mkhw=="
 	val-override-date: "20090617133009"
 	target-fetch-policy: "0 0 0 0 0"
+	fake-sha1: yes
 
 stub-zone:
 	name: "."
@@ -115,7 +116,7 @@ ENTRY_END
 STEP 10 CHECK_ANSWER
 ENTRY_BEGIN
 MATCH all
-REPLY QR RD RA AD NXDOMAIN
+REPLY QR RD RA AD DO NXDOMAIN
 SECTION QUESTION
 www.example.com.dlv.isc.org. IN DLV
 SECTION ANSWER

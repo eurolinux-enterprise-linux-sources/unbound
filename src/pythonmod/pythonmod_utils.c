@@ -48,6 +48,8 @@
 #include "util/data/msgreply.h"
 #include "util/storage/slabhash.h"
 #include "util/regional.h"
+#include "iterator/iter_delegpt.h"
+#include "sldns/sbuffer.h"
 
 #undef _POSIX_C_SOURCE
 #undef _XOPEN_SOURCE
@@ -66,18 +68,18 @@ int storeQueryInCache(struct module_qstate* qstate, struct query_info* qinfo, st
     }
 
     return dns_cache_store(qstate->env, qinfo, msgrep, is_referral, 
-	qstate->prefetch_leeway, 0, NULL);
+	qstate->prefetch_leeway, 0, NULL, qstate->query_flags);
 }
 
 /*  Invalidate the message associated with query_info stored in message cache */
 void invalidateQueryInCache(struct module_qstate* qstate, struct query_info* qinfo)
 { 
-    hashvalue_t h;
+    hashvalue_type h;
     struct lruhash_entry* e;
     struct reply_info *r;
     size_t i, j;
 
-    h = query_info_hash(qinfo);
+    h = query_info_hash(qinfo, qstate->query_flags);
     if ((e=slabhash_lookup(qstate->env->msg_cache, h, qinfo, 0))) 
     {
 	r = (struct reply_info*)(e->data);
@@ -106,7 +108,7 @@ void invalidateQueryInCache(struct module_qstate* qstate, struct query_info* qin
 }
 
 /* Create response according to the ldns packet content */
-int createResponse(struct module_qstate* qstate, ldns_buffer* pkt)
+int createResponse(struct module_qstate* qstate, sldns_buffer* pkt)
 {
     struct msg_parse* prs;
     struct edns_data edns;
@@ -121,13 +123,14 @@ int createResponse(struct module_qstate* qstate, ldns_buffer* pkt)
     memset(prs, 0, sizeof(*prs));
     memset(&edns, 0, sizeof(edns));
 
-    ldns_buffer_set_position(pkt, 0);
+    sldns_buffer_set_position(pkt, 0);
     if (parse_packet(pkt, prs, qstate->env->scratch) != LDNS_RCODE_NOERROR) {
 	verbose(VERB_ALGO, "storeResponse: parse error on reply packet");
 	return 0;
     }
     /* edns is not examined, but removed from message to help cache */
-    if(parse_extract_edns(prs, &edns) != LDNS_RCODE_NOERROR)
+    if(parse_extract_edns(prs, &edns, qstate->env->scratch) !=
+	    LDNS_RCODE_NOERROR)
 	return 0;
 
     /* remove CD-bit, we asked for in case we handle validation ourself */
@@ -170,6 +173,20 @@ void reply_addr2str(struct comm_reply* reply, char* dest, int maxlen)
 
 	if(af == AF_INET6)
 		sinaddr = &((struct sockaddr_in6*)&(reply->addr))->sin6_addr;
+	dest[0] = 0;
+	if (inet_ntop(af, sinaddr, dest, (socklen_t)maxlen) == 0)
+	   return;
+	dest[maxlen-1] = 0;
+}
+
+/* Convert target->addr to string */
+void delegpt_addr_addr2str(struct delegpt_addr* target, char *dest, int maxlen)
+{
+	int af = (int)((struct sockaddr_in*) &(target->addr))->sin_family;
+	void* sinaddr = &((struct sockaddr_in*) &(target->addr))->sin_addr;
+
+	if(af == AF_INET6)
+		sinaddr = &((struct sockaddr_in6*)&(target->addr))->sin6_addr;
 	dest[0] = 0;
 	if (inet_ntop(af, sinaddr, dest, (socklen_t)maxlen) == 0)
 	   return;

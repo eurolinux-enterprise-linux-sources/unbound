@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /**
@@ -51,7 +51,7 @@
 #include "daemon/remote.h"
 #include "util/config_file.h"
 #include "util/netevent.h"
-#include "util/winsock_event.h"
+#include "util/ub_event.h"
 
 /** global service status */
 static SERVICE_STATUS	service_status;
@@ -60,7 +60,7 @@ static SERVICE_STATUS_HANDLE service_status_handle;
 /** global service stop event */
 static WSAEVENT service_stop_event = NULL;
 /** event struct for stop callbacks */
-static struct event service_stop_ev;
+static struct ub_event* service_stop_ev = NULL;
 /** if stop even means shutdown or restart */
 static int service_stop_shutdown = 0;
 /** config file to open. global communication to service_main() */
@@ -70,7 +70,7 @@ static int service_cmdline_verbose = 0;
 /** the cron callback */
 static struct comm_timer* service_cron = NULL;
 /** the cron thread */
-static ub_thread_t cron_thread = NULL;
+static ub_thread_type cron_thread = NULL;
 /** if cron has already done its quick check */
 static int cron_was_quick = 0;
 
@@ -333,15 +333,17 @@ service_init(int r, struct daemon** d, struct config_file** c)
 	verbose(VERB_QUERY, "winservice - apply settings");
 	/* apply settings and init */
 	verbosity = cfg->verbosity + service_cmdline_verbose;
+	w_config_adjust_directory(cfg);
 	if(cfg->directory && cfg->directory[0]) {
-		if(chdir(cfg->directory)) {
+		char* dir = cfg->directory;
+		if(chdir(dir)) {
 			log_err("could not chdir to %s: %s", 
-				cfg->directory, strerror(errno));
+				dir, strerror(errno));
 			if(errno != ENOENT)
 				return 0;
 			log_warn("could not change directory - continuing");
 		} else
-			verbose(VERB_QUERY, "chdir to %s", cfg->directory);
+			verbose(VERB_QUERY, "chdir to %s", dir);
 	}
 	log_init(cfg->logfile, cfg->use_syslog, cfg->chrootdir);
 	if(!r) report_status(SERVICE_START_PENDING, NO_ERROR, 2400);
@@ -451,9 +453,9 @@ service_main(DWORD ATTR_UNUSED(argc), LPTSTR* ATTR_UNUSED(argv))
 	/* exit */
 	verbose(VERB_ALGO, "winservice - cleanup.");
 	report_status(SERVICE_STOP_PENDING, NO_ERROR, 0);
+	if(service_stop_event) (void)WSACloseEvent(service_stop_event);
 	service_deinit(daemon, cfg);
 	free(service_cfgfile);
-	if(service_stop_event) (void)WSACloseEvent(service_stop_event);
 	verbose(VERB_QUERY, "winservice - full stop");
 	report_status(SERVICE_STOPPED, NO_ERROR, 0);
 }
@@ -563,7 +565,7 @@ win_do_cron(void* ATTR_UNUSED(arg))
 
 /** Set the timer for cron for the next wake up */
 static void
-set_cron_timer()
+set_cron_timer(void)
 {
 	struct timeval tv;
 	int crontime;
@@ -598,9 +600,9 @@ void wsvc_setup_worker(struct worker* worker)
 	/* if not started with -w service, do nothing */
 	if(!service_stop_event)
 		return;
-	if(!winsock_register_wsaevent(comm_base_internal(worker->base),
-		&service_stop_ev, service_stop_event,
-		&worker_win_stop_cb, worker)) {
+	if(!(service_stop_ev = ub_winsock_register_wsaevent(
+		comm_base_internal(worker->base), service_stop_event,
+		&worker_win_stop_cb, worker))) {
 		fatal_exit("could not register wsaevent");
 		return;
 	}

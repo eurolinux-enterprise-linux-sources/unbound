@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /**
@@ -190,19 +190,32 @@ wsvc_install(FILE* out, const char* rename)
 {
         SC_HANDLE scm;
         SC_HANDLE sv;
-        TCHAR path[MAX_PATH+2+256];
+        TCHAR path[2*MAX_PATH+4+256];
+        TCHAR path_config[2*MAX_PATH+4+256];
         if(out) fprintf(out, "installing unbound service\n");
         if(!GetModuleFileName(NULL, path+1, MAX_PATH))
                 fatal_win(out, "could not GetModuleFileName");
         /* change 'unbound-service-install' to 'unbound' */
-	if(rename)
+	if(rename) {
         	change(out, path+1, sizeof(path)-1, rename, "unbound.exe");
+		memmove(path_config+1, path+1, sizeof(path)-1);
+        	change(out, path_config+1, sizeof(path_config)-1,
+			"unbound.exe", "service.conf");
+	}
 
 	event_reg_install(out, path+1);
 
         /* have to quote it because of spaces in directory names */
         /* could append arguments to be sent to ServiceMain */
         quote_it(out, path, sizeof(path));
+
+	/* if we started in a different directory, also read config from it. */
+	if(rename) {
+        	quote_it(out, path_config, sizeof(path_config));
+		strcat(path, " -c ");
+		strcat(path, path_config);
+	}
+
         strcat(path, " -w service");
         scm = OpenSCManager(NULL, NULL, (int)SC_MANAGER_CREATE_SERVICE);
         if(!scm) fatal_win(out, "could not OpenSCManager");
@@ -218,8 +231,8 @@ wsvc_install(FILE* out, const char* rename)
                 NULL, /* no load ordering group */
                 NULL, /* no tag identifier */
                 NULL, /* no deps */
-                NULL, /* on LocalSystem */
-                NULL /* no password */
+		NULL, /* on LocalSystem */
+		NULL /* no password */
                 );
         if(!sv) {
                 CloseServiceHandle(scm);

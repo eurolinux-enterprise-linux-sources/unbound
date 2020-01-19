@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /**
@@ -44,6 +44,9 @@
  */
 
 #include "config.h"
+#ifdef HAVE_TIME_H
+#include <time.h>
+#endif
 #include "util/log.h"
 #include "util/rbtree.h"
 #include "util/locks.h"
@@ -65,7 +68,7 @@ struct order_id {
 /** a lock */
 struct order_lock {
 	/** rbnode in all tree */
-	rbnode_t node;
+	rbnode_type node;
 	/** lock id */
 	struct order_id id;
 	/** the creation file */
@@ -73,7 +76,7 @@ struct order_lock {
 	/** creation line */
 	int create_line;
 	/** set of all locks that are smaller than this one (locked earlier) */
-	rbtree_t* smaller;
+	rbtree_type* smaller;
 	/** during depthfirstsearch, this is a linked list of the stack 
 	 * of locks. points to the next lock bigger than this one. */
 	struct lock_ref* dfs_next;
@@ -86,7 +89,7 @@ struct order_lock {
 /** reference to a lock in a rbtree set */
 struct lock_ref {
 	/** rbnode, key is an order_id ptr */
-	rbnode_t node;
+	rbnode_type node;
 	/** the lock referenced */
 	struct order_lock* lock;
 	/** why is this ref */
@@ -102,7 +105,7 @@ static int verb = 0;
 
 /** print program usage help */
 static void
-usage()
+usage(void)
 {
 	printf("lock_verify <trace files>\n");
 }
@@ -178,7 +181,7 @@ static int readup_str(char** str, FILE* in)
 }
 
 /** read creation entry */
-static void read_create(rbtree_t* all, FILE* in)
+static void read_create(rbtree_type* all, FILE* in)
 {
 	struct order_lock* o = calloc(1, sizeof(struct order_lock));
 	if(!o) fatal_exit("malloc failure");
@@ -207,7 +210,7 @@ static void read_create(rbtree_t* all, FILE* in)
 
 /** insert lock entry (empty) into list */
 static struct order_lock* 
-insert_lock(rbtree_t* all, struct order_id* id)
+insert_lock(rbtree_type* all, struct order_id* id)
 {
 	struct order_lock* o = calloc(1, sizeof(struct order_lock));
 	if(!o) fatal_exit("malloc failure");
@@ -220,7 +223,7 @@ insert_lock(rbtree_t* all, struct order_id* id)
 }
 
 /** read lock entry */
-static void read_lock(rbtree_t* all, FILE* in, int val)
+static void read_lock(rbtree_type* all, FILE* in, int val)
 {
 	struct order_id prev_id, now_id;
 	struct lock_ref* ref;
@@ -253,7 +256,7 @@ static void read_lock(rbtree_t* all, FILE* in, int val)
 }
 
 /** read input file */
-static void readinput(rbtree_t* all, char* file)
+static void readinput(rbtree_type* all, char* file)
 {
 	FILE *in = fopen(file, "r");
 	int fst;
@@ -364,7 +367,7 @@ static void check_order_lock(struct order_lock* lock)
 }
 
 /** Check ordering of locks */
-static void check_order(rbtree_t* all_locks)
+static void check_order(rbtree_type* all_locks)
 {
 	/* check each lock */
 	struct order_lock* lock;
@@ -388,9 +391,14 @@ static void check_order(rbtree_t* all_locks)
 int
 main(int argc, char* argv[])
 {
-	rbtree_t* all_locks;
+	rbtree_type* all_locks;
 	int i;
 	time_t starttime = time(NULL);
+#ifdef USE_THREAD_DEBUG
+	/* do not overwrite the ublocktrace files with the ones generated
+	 * by this program (i.e. when the log code creates a lock) */
+	check_locking_order = 0;
+#endif
 	if(argc <= 1) {
 		usage();
 		return 1;

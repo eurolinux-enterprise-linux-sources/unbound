@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /**
@@ -70,7 +70,7 @@ static int verb = 0;
 
 /** Give petal usage, and exit (1). */
 static void
-usage()
+usage(void)
 {
 	printf("Usage:	petal [opts]\n");
 	printf("	https daemon serves files from ./'host'/filename\n");
@@ -235,12 +235,29 @@ setup_ctx(char* key, char* cert)
 	SSL_CTX* ctx = SSL_CTX_new(SSLv23_server_method());
 	if(!ctx) print_exit("out of memory");
 	(void)SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
-	if(!SSL_CTX_use_certificate_file(ctx, cert, SSL_FILETYPE_PEM))
+	(void)SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3);
+	if(!SSL_CTX_use_certificate_chain_file(ctx, cert))
 		print_exit("cannot read cert");
 	if(!SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM))
 		print_exit("cannot read key");
 	if(!SSL_CTX_check_private_key(ctx))
 		print_exit("private key is not correct");
+#if HAVE_DECL_SSL_CTX_SET_ECDH_AUTO
+	if (!SSL_CTX_set_ecdh_auto(ctx,1))
+		if(verb>=1) printf("failed to set_ecdh_auto, not enabling ECDHE\n");
+#elif defined(USE_ECDSA)
+	if(1) {
+		EC_KEY *ecdh = EC_KEY_new_by_curve_name (NID_X9_62_prime256v1);
+		if (!ecdh) {
+			if(verb>=1) printf("could not find p256, not enabling ECDHE\n");
+		} else {
+			if (1 != SSL_CTX_set_tmp_ecdh (ctx, ecdh)) {
+				if(verb>=1) printf("Error in SSL_CTX_set_tmp_ecdh, not enabling ECDHE\n");
+			}
+			EC_KEY_free(ecdh);
+		}
+	}
+#endif
 	if(!SSL_CTX_load_verify_locations(ctx, cert, NULL))
 		print_exit("cannot load cert verify locations");
 	return ctx;
@@ -349,13 +366,14 @@ provide_file_10(SSL* ssl, char* fname)
 		"rb"
 #endif
 		);
-	int r;
+	size_t r;
 	const char* rcode = "200 OK";
 	if(!in) {
 		char hdr[1024];
 		rcode = "404 File not found";
-		r = snprintf(hdr, sizeof(hdr), "HTTP/1.1 %s\r\n\r\n", rcode);
-		if(SSL_write(ssl, hdr, r) <= 0) {
+		snprintf(hdr, sizeof(hdr), "HTTP/1.1 %s\r\n\r\n", rcode);
+		r = strlen(hdr);
+		if(SSL_write(ssl, hdr, (int)r) <= 0) {
 			/* write failure */
 		}
 		return;
@@ -371,16 +389,20 @@ provide_file_10(SSL* ssl, char* fname)
 	}
 	avail = len+header_reserve;
 	at = buf;
-	r = snprintf(at, avail, "HTTP/1.1 %s\r\n", rcode);
+	snprintf(at, avail, "HTTP/1.1 %s\r\n", rcode);
+	r = strlen(at);
 	at += r;
 	avail -= r;
-	r = snprintf(at, avail, "Server: petal/%s\r\n", PACKAGE_VERSION);
+	snprintf(at, avail, "Server: petal/%s\r\n", PACKAGE_VERSION);
+	r = strlen(at);
 	at += r;
 	avail -= r;
-	r = snprintf(at, avail, "Content-Length: %u\r\n", (unsigned)len);
+	snprintf(at, avail, "Content-Length: %u\r\n", (unsigned)len);
+	r = strlen(at);
 	at += r;
 	avail -= r;
-	r = snprintf(at, avail, "\r\n");
+	snprintf(at, avail, "\r\n");
+	r = strlen(at);
 	at += r;
 	avail -= r;
 	if(avail < len) { /* robust */
@@ -407,9 +429,10 @@ static void
 provide_file_chunked(SSL* ssl, char* fname)
 {
 	char buf[16384];
+	char* tmpbuf = NULL;
 	char* at = buf;
 	size_t avail = sizeof(buf);
-	int r;
+	size_t r;
 	FILE* in = fopen(fname, 
 #ifndef USE_WINSOCK
 		"r"
@@ -423,19 +446,24 @@ provide_file_chunked(SSL* ssl, char* fname)
 	}
 
 	/* print headers */
-	r = snprintf(at, avail, "HTTP/1.1 %s\r\n", rcode);
+	snprintf(at, avail, "HTTP/1.1 %s\r\n", rcode);
+	r = strlen(at);
 	at += r;
 	avail -= r;
-	r = snprintf(at, avail, "Server: petal/%s\r\n", PACKAGE_VERSION);
+	snprintf(at, avail, "Server: petal/%s\r\n", PACKAGE_VERSION);
+	r = strlen(at);
 	at += r;
 	avail -= r;
-	r = snprintf(at, avail, "Transfer-Encoding: chunked\r\n");
+	snprintf(at, avail, "Transfer-Encoding: chunked\r\n");
+	r = strlen(at);
 	at += r;
 	avail -= r;
-	r = snprintf(at, avail, "Connection: close\r\n");
+	snprintf(at, avail, "Connection: close\r\n");
+	r = strlen(at);
 	at += r;
 	avail -= r;
-	r = snprintf(at, avail, "\r\n");
+	snprintf(at, avail, "\r\n");
+	r = strlen(at);
 	at += r;
 	avail -= r;
 	if(avail < 16) { /* robust */
@@ -444,11 +472,16 @@ provide_file_chunked(SSL* ssl, char* fname)
 	}
 
 	do {
-		char tmpbuf[sizeof(buf)];
+		size_t red;
+		free(tmpbuf);
+		tmpbuf = malloc(avail-16);
+		if(!tmpbuf)
+			break;
 		/* read chunk; space-16 for xxxxCRLF..CRLF0CRLFCRLF (3 spare)*/
-		size_t red = in?fread(tmpbuf, 1, avail-16, in):0;
+		red = in?fread(tmpbuf, 1, avail-16, in):0;
 		/* prepare chunk */
-		r = snprintf(at, avail, "%x\r\n", (unsigned)red);
+		snprintf(at, avail, "%x\r\n", (unsigned)red);
+		r = strlen(at);
 		if(verb >= 3)
 		{printf("chunk len %x\n", (unsigned)red); fflush(stdout);}
 		at += r;
@@ -458,17 +491,20 @@ provide_file_chunked(SSL* ssl, char* fname)
 			memmove(at, tmpbuf, red);
 			at += red;
 			avail -= red;
-			r = snprintf(at, avail, "\r\n");
+			snprintf(at, avail, "\r\n");
+			r = strlen(at);
 			at += r;
 			avail -= r;
 		}
 		if(in && feof(in) && red != 0) {
-			r = snprintf(at, avail, "0\r\n");
+			snprintf(at, avail, "0\r\n");
+			r = strlen(at);
 			at += r;
 			avail -= r;
 		}
 		if(!in || feof(in)) {
-			r = snprintf(at, avail, "\r\n");
+			snprintf(at, avail, "\r\n");
+			r = strlen(at);
 			at += r;
 			avail -= r;
 		}
@@ -483,6 +519,7 @@ provide_file_chunked(SSL* ssl, char* fname)
 		avail = sizeof(buf);
 	} while(in && !feof(in) && !ferror(in));
 
+	free(tmpbuf);
 	if(in) fclose(in);
 }
 
@@ -603,16 +640,32 @@ int main(int argc, char* argv[])
 #ifdef SIGPIPE
 	(void)signal(SIGPIPE, SIG_IGN);
 #endif
+#ifdef HAVE_ERR_LOAD_CRYPTO_STRINGS
 	ERR_load_crypto_strings();
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x10100000 || !defined(HAVE_OPENSSL_INIT_SSL)
 	ERR_load_SSL_strings();
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x10100000 || !defined(HAVE_OPENSSL_INIT_CRYPTO)
 	OpenSSL_add_all_algorithms();
+#else
+	OPENSSL_init_crypto(OPENSSL_INIT_ADD_ALL_CIPHERS
+		| OPENSSL_INIT_ADD_ALL_DIGESTS
+		| OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x10100000 || !defined(HAVE_OPENSSL_INIT_SSL)
 	(void)SSL_library_init();
+#else
+	(void)OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS, NULL);
+#endif
 
 	do_service(addr, port, key, cert);
 
+#ifdef HAVE_CRYPTO_CLEANUP_ALL_EX_DATA
 	CRYPTO_cleanup_all_ex_data();
-	ERR_remove_state(0);
+#endif
+#ifdef HAVE_ERR_FREE_STRINGS
 	ERR_free_strings();
-	RAND_cleanup();
+#endif
 	return 0;
 }

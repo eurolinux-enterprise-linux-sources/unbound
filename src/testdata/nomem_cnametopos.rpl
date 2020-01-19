@@ -7,6 +7,7 @@ server:
 	msg-cache-size: 8
 	rrset-cache-size: 8
 	target-fetch-policy: "0 0 0 0 0"
+	fake-sha1: yes
 
 stub-zone:
 	name: "."
@@ -281,7 +282,7 @@ STEP 5 TRAFFIC
 STEP 10 CHECK_ANSWER
 ENTRY_BEGIN
 MATCH all
-REPLY QR RD RA AD NOERROR
+REPLY QR RD RA AD DO NOERROR
 SECTION QUESTION
 www.example.com. IN A
 SECTION ANSWER

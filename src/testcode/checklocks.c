@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
@@ -58,8 +58,10 @@
 
 /** if key has been created */
 static int key_created = 0;
+/** if the key was deleted, i.e. we have quit */
+static int key_deleted = 0;
 /** we hide the thread debug info with this key. */
-static ub_thread_key_t thr_debug_key;
+static ub_thread_key_type thr_debug_key;
 /** the list of threads, so all threads can be examined. NULL if unused. */
 static struct thr_check* thread_infos[THRDEBUG_MAX_THREADS];
 /** do we check locking order */
@@ -273,6 +275,15 @@ checklock_init(enum check_lock_type type, struct checked_lock** lock,
 		thr_debug_key);
 	if(!e)
 		fatal_exit("%s %s %d: out of memory", func, file, line);
+	if(!thr) {
+		/* this is called when log_init() calls lock_init()
+		 * functions, and the test check code has not yet
+		 * been initialised.  But luckily, the checklock_start()
+		 * routine can be called multiple times without ill effect.
+		 */
+		checklock_start();
+		thr = (struct thr_check*)pthread_getspecific(thr_debug_key);
+	}
 	if(!thr)
 		fatal_exit("%s %s %d: lock_init no thread info", func, file,
 			line);
@@ -419,7 +430,7 @@ finish_acquire_lock(struct thr_check* thr, struct checked_lock* lock,
  * @param timedfunc: the pthread_mutex_timedlock or similar function.
  *	Uses absolute timeout value.
  * @param arg: what to pass to tryfunc and timedlock.
- * @param exclusive: if lock must be exlusive (only one allowed).
+ * @param exclusive: if lock must be exclusive (only one allowed).
  * @param getwr: if attempts to get writelock (or readlock) for rwlocks.
  */
 static void 
@@ -491,6 +502,8 @@ void
 checklock_rdlock(enum check_lock_type type, struct checked_lock* lock,
         const char* func, const char* file, int line)
 {
+	if(key_deleted)
+		return;
 
 	log_assert(type == check_lock_rwlock);
 	checklock_lockit(type, lock, func, file, line,
@@ -509,6 +522,8 @@ void
 checklock_wrlock(enum check_lock_type type, struct checked_lock* lock,
         const char* func, const char* file, int line)
 {
+	if(key_deleted)
+		return;
 	log_assert(type == check_lock_rwlock);
 	checklock_lockit(type, lock, func, file, line,
 		try_wr, timed_wr, &lock->u.rwlock, 0, 1);
@@ -544,6 +559,8 @@ void
 checklock_lock(enum check_lock_type type, struct checked_lock* lock,
         const char* func, const char* file, int line)
 {
+	if(key_deleted)
+		return;
 	log_assert(type != check_lock_rwlock);
 	switch(type) {
 		case check_lock_mutex:
@@ -566,8 +583,10 @@ void
 checklock_unlock(enum check_lock_type type, struct checked_lock* lock,
         const char* func, const char* file, int line)
 {
-	struct thr_check *thr = (struct thr_check*)pthread_getspecific(
-		thr_debug_key);
+	struct thr_check *thr;
+	if(key_deleted)
+		return;
+	thr = (struct thr_check*)pthread_getspecific(thr_debug_key);
 	checktype(type, lock, func, file, line);
 	if(!thr) lock_error(lock, func, file, line, "no thread info");
 
@@ -676,6 +695,8 @@ static void* checklock_main(void* arg)
 /** init the main thread */
 void checklock_start(void)
 {
+	if(key_deleted)
+		return;
 	if(!key_created) {
 		struct thr_check* thisthr = (struct thr_check*)calloc(1, 
 			sizeof(struct thr_check));
@@ -696,6 +717,7 @@ void checklock_stop(void)
 {
 	if(key_created) {
 		int i;
+		key_deleted = 1;
 		if(check_locking_order)
 			fclose(thread_infos[0]->order_info);
 		free(thread_infos[0]);
@@ -741,7 +763,8 @@ static void
 lock_debug_info(struct checked_lock* lock)
 {
 	if(!lock) return;
-	log_info("+++ Lock %x, %d %d create %s %s %d", (int)lock, 
+	log_info("+++ Lock %llx, %d %d create %s %s %d",
+		(unsigned long long)(size_t)lock, 
 		lock->create_thread, lock->create_instance, 
 		lock->create_func, lock->create_file, lock->create_line);
 	log_info("lock type: %s",
@@ -776,8 +799,9 @@ thread_debug_info(struct thr_check* thr)
 	struct checked_lock* l = NULL;
 	if(!thr) return;
 	log_info("pthread id is %x", (int)thr->id);
-	log_info("thread func is %x", (int)thr->func);
-	log_info("thread arg is %x (%d)", (int)thr->arg, 
+	log_info("thread func is %llx", (unsigned long long)(size_t)thr->func);
+	log_info("thread arg is %llx (%d)",
+		(unsigned long long)(size_t)thr->arg, 
 		(thr->arg?*(int*)thr->arg:0));
 	log_info("thread num is %d", thr->num);
 	log_info("locks created %d", thr->locks_created);
@@ -787,7 +811,8 @@ thread_debug_info(struct thr_check* thr)
 	w = thr->waiting;
 	f = thr->holding_first;
 	l = thr->holding_last;
-	log_info("thread waiting for a lock: %s %x", w?"yes":"no", (int)w);
+	log_info("thread waiting for a lock: %s %llx", w?"yes":"no",
+		(unsigned long long)(size_t)w);
 	lock_debug_info(w);
 	log_info("thread holding first: %s, last: %s", f?"yes":"no", 
 		l?"yes":"no");

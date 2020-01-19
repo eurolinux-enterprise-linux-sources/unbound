@@ -3,6 +3,7 @@ server:
 	target-fetch-policy: "0 0 0 0 0"
 	log-time-ascii: yes
 	val-override-date: '20091018111500'
+	fake-sha1: yes
 stub-zone:
 	name: "."
 	stub-addr: 193.0.14.129         # K.ROOT-SERVERS.NET.
@@ -89,7 +90,7 @@ example.com.	10800	IN	RRSIG	DNSKEY 5 2 10800 20091124111500 20091018111500 16614
 ENTRY_END
 
 ENTRY_BEGIN
-MATCH opcode subdomain
+MATCH opcode qname qtype
 ADJUST copy_id copy_query
 REPLY QR
 SECTION QUESTION
@@ -97,8 +98,16 @@ www.example.com. IN A
 SECTION ANSWER
 www.example.com. IN A 10.20.30.40
 ENTRY_END
-RANGE_END
 
+ENTRY_BEGIN
+MATCH opcode qname qtype
+ADJUST copy_id copy_query
+REPLY QR
+SECTION QUESTION
+ns.example.com. IN AAAA
+SECTION ANSWER
+; no AAAA
+ENTRY_END
 RANGE_END
 
 STEP 20 QUERY
@@ -112,7 +121,7 @@ ENTRY_END
 STEP 30 CHECK_ANSWER
 ENTRY_BEGIN
 MATCH all
-REPLY QR RD RA NOERROR
+REPLY QR RD RA DO NOERROR
 SECTION QUESTION
 www.example.com. IN A
 SECTION ANSWER

@@ -21,29 +21,34 @@
  * specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 /**
  * \file
- * Exits with code 1 on a failure. 0 if all unit tests are successfull.
+ * Exits with code 1 on a failure. 0 if all unit tests are successful.
  */
 
 #include "config.h"
-#include "testcode/ldns-testpkts.h"
+#ifdef HAVE_TIME_H
+#  include <time.h>
+#endif
+#include "testcode/testpkts.h"
 #include "testcode/replay.h"
 #include "testcode/fake_event.h"
 #include "daemon/remote.h"
 #include "util/config_file.h"
+#include "sldns/keyraw.h"
+#include <ctype.h>
 
 /** signal that this is a testbound compile */
 #define unbound_testbound 1
@@ -62,15 +67,18 @@ static struct config_strlist* cfgfiles = NULL;
 
 /** give commandline usage for testbound. */
 static void
-testbound_usage()
+testbound_usage(void)
 {
 	printf("usage: testbound [options]\n");
 	printf("\ttest the unbound daemon.\n");
 	printf("-h      this help\n");
 	printf("-p file	playback text file\n");
+	printf("-1 	detect SHA1 support (exit code 0 or 1)\n");
 	printf("-2 	detect SHA256 support (exit code 0 or 1)\n");
 	printf("-g 	detect GOST support (exit code 0 or 1)\n");
 	printf("-e 	detect ECDSA support (exit code 0 or 1)\n");
+	printf("-c 	detect CLIENT_SUBNET support (exit code 0 or 1)\n");
+	printf("-i 	detect IPSECMOD support (exit code 0 or 1)\n");
 	printf("-s 	testbound self-test - unit test of testbound parts.\n");
 	printf("-o str  unbound commandline options separated by spaces.\n");
 	printf("Version %s\n", PACKAGE_VERSION);
@@ -92,7 +100,7 @@ add_opts(const char* args, int* pass_argc, char* pass_argv[])
 {
 	const char *p = args, *np;
 	size_t len;
-	while(p && isspace((int)*p)) 
+	while(p && isspace((unsigned char)*p)) 
 		p++;
 	while(p && *p) {
 		/* find location of next string and length of this one */
@@ -110,7 +118,7 @@ add_opts(const char* args, int* pass_argc, char* pass_argv[])
 		(*pass_argc)++;
 		/* go to next option */
 	        p = np;
-		while(p && isspace((int)*p)) 
+		while(p && isspace((unsigned char)*p)) 
 			p++;
 	}
 }
@@ -135,9 +143,9 @@ spool_auto_file(FILE* in, int* lineno, FILE* cfg, char* id)
 	char* parse;
 	FILE* spool;
 	/* find filename for new file */
-	while(isspace((int)*id))
+	while(isspace((unsigned char)*id))
 		id++;
-	if(strlen(id)==0) 
+	if(*id == '\0') 
 		fatal_exit("AUTROTRUST_FILE must have id, line %d", *lineno);
 	id[strlen(id)-1]=0; /* remove newline */
 	fake_temp_file("_auto_", id, line, sizeof(line));
@@ -153,7 +161,7 @@ spool_auto_file(FILE* in, int* lineno, FILE* cfg, char* id)
 	while(fgets(line, MAX_LINE_LEN-1, in)) {
 		parse = line;
 		(*lineno)++;
-		while(isspace((int)*parse))
+		while(isspace((unsigned char)*parse))
 			parse++;
 		if(strncmp(parse, "AUTOTRUST_END", 13) == 0) {
 			fclose(spool);
@@ -188,10 +196,11 @@ setup_config(FILE* in, int* lineno, int* pass_argc, char* pass_argv[])
 	fprintf(cfg, "		username: \"\"\n");
 	fprintf(cfg, "		pidfile: \"\"\n");
 	fprintf(cfg, "		val-log-level: 2\n");
+	fprintf(cfg, "remote-control:	control-enable: no\n");
 	while(fgets(line, MAX_LINE_LEN-1, in)) {
 		parse = line;
 		(*lineno)++;
-		while(isspace((int)*parse))
+		while(isspace((unsigned char)*parse))
 			parse++;
 		if(!*parse || parse[0] == ';')
 			continue;
@@ -273,15 +282,23 @@ main(int argc, char* argv[])
 	pass_argc = 1;
 	pass_argv[0] = "unbound";
 	add_opts("-d", &pass_argc, pass_argv);
-	while( (c=getopt(argc, argv, "2egho:p:s")) != -1) {
+	while( (c=getopt(argc, argv, "12egciho:p:s")) != -1) {
 		switch(c) {
 		case 's':
 			free(pass_argv[1]);
 			testbound_selftest();
-			printf("selftest successful\n");
 			exit(0);
+		case '1':
+#ifdef USE_SHA1
+			printf("SHA1 supported\n");
+			exit(0);
+#else
+			printf("SHA1 not supported\n");
+			exit(1);
+#endif
+			break;
 		case '2':
-#if (defined(HAVE_EVP_SHA256) || defined(HAVE_NSS)) && defined(USE_SHA2)
+#if (defined(HAVE_EVP_SHA256) || defined(HAVE_NSS) || defined(HAVE_NETTLE)) && defined(USE_SHA2)
 			printf("SHA256 supported\n");
 			exit(0);
 #else
@@ -300,7 +317,7 @@ main(int argc, char* argv[])
 			break;
 		case 'g':
 #ifdef USE_GOST
-			if(ldns_key_EVP_load_gost_id()) {
+			if(sldns_key_EVP_load_gost_id()) {
 				printf("GOST supported\n");
 				exit(0);
 			} else {
@@ -309,6 +326,24 @@ main(int argc, char* argv[])
 			}
 #else
 			printf("GOST not supported\n");
+			exit(1);
+#endif
+			break;
+		case 'c':
+#ifdef CLIENT_SUBNET
+			printf("CLIENT_SUBNET supported\n");
+			exit(0);
+#else
+			printf("CLIENT_SUBNET not supported\n");
+			exit(1);
+#endif
+			break;
+		case 'i':
+#ifdef USE_IPSECMOD
+			printf("IPSECMOD supported\n");
+			exit(0);
+#else
+			printf("IPSECMOD not supported\n");
 			exit(1);
 #endif
 			break;

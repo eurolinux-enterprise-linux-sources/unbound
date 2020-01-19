@@ -1,5 +1,6 @@
 %{?!with_python:      %global with_python      1}
-%{?!with_munin:      %global with_munin      0}
+%{?!with_munin:       %global with_munin       0}
+%{?!with_test:        %global with_test        1}
 
 %if %{with_python}
 %{!?python_sitelib: %global python_sitelib %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib()")}
@@ -10,11 +11,11 @@
 
 Summary: Validating, recursive, and caching DNS(SEC) resolver
 Name: unbound
-Version: 1.4.20
-Release: 34%{?dist}
+Version: 1.6.6
+Release: 1%{?dist}
 License: BSD
-Url: http://www.nlnetlabs.nl/unbound/
-Source: http://www.unbound.net/downloads/%{name}-%{version}.tar.gz
+Url: https://unbound.net/
+Source: https://www.unbound.net/downloads/%{name}-%{version}.tar.gz
 Source1: unbound.service
 Source2: unbound.conf
 Source3: unbound.munin
@@ -26,29 +27,30 @@ Source8: tmpfiles-unbound.conf
 Source9: example.com.key
 Source10: example.com.conf
 Source11: block-example.com.conf
-# From http://data.iana.org/root-anchors/icannbundle.pem
-Source12: icannbundle.pem
+Source12: https://data.iana.org/root-anchors/icannbundle.pem
 Source13: root.anchor
 Source14: unbound.sysconfig
 Source15: unbound-anchor.timer
 Source16: unbound-munin.README
 Source17: unbound-anchor.service
 
-Patch1: unbound-1.4.20-roundrobin.patch
-Patch2: unbound-1.4.20-streamtcp-manpage.patch
-Patch3: unbound-1.4.20-coverity_scan.patch
-Patch4: unbound-1.4.20-CVE-2014-8602.patch
-Patch5: unbound-1.4.20-cache-max-negative-ttl.patch
-Patch6: unbound-1.4.20-longcheck-fixup.patch
-Patch7: unbound-1.4.20-trust-anchor.patch
-
+Patch1: unbound-1.6.3-longcheck-fixup.patch
+Patch3: unbound-1.6.3-print-test-fails.patch
+Patch4: unbound-1.6.3-coverity.patch
+# Randomize outgoing port too, do not fail on two running builds on one host
+Patch5: unbound-1.6.6-test-fwd_oneport.patch
 Group: System Environment/Daemons
-BuildRequires: openssl-devel , ldns-devel >= 1.6.16-10
+BuildRequires: openssl-devel
+%if %{with_test}
 # needed for the test suite
 BuildRequires: bind-utils
+BuildRequires: ldns
+BuildRequires: vim-common nmap-ncat
+%endif
 # needed to regenerate configparser
 BuildRequires: flex, byacc
 BuildRequires: libevent-devel expat-devel
+BuildRequires: pkgconfig
 %if %{with_python}
 BuildRequires:  python-devel swig
 %endif
@@ -59,7 +61,6 @@ BuildRequires: systemd-units
 Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd
-Requires: ldns >= 1.6.16-10
 Requires(pre): shadow-utils
 # Needed because /usr/sbin/unbound links unbound libs staticly
 Requires: %{name}-libs%{?_isa} = %{version}-%{release}
@@ -90,7 +91,8 @@ Plugin for the munin / munin-node monitoring package
 %package devel
 Summary: Development package that includes the unbound header files
 Group: Development/Libraries
-Requires: %{name}-libs%{?_isa} = %{version}-%{release}, openssl-devel, ldns-devel
+Requires: %{name}-libs%{?_isa} = %{version}-%{release}, openssl-devel
+Requires: pkgconfig
 
 %description devel
 The devel package contains the unbound library and the include files
@@ -131,13 +133,10 @@ Python modules and extensions for unbound
 
 %prep
 %setup -q 
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p0
-%patch5 -p1 -b .cache-max-negative-ttl
-%patch6 -p1 -b .longcheck-fixup
-%patch7 -p1 -b .root-anchor
+%patch1 -p1 -b .longcheck-fixup
+%patch3 -p1 -b .testlog
+%patch4 -p1 -b .coverity
+%patch5 -p1 -b .test-fwd_oneport
 
 # regrnerate config parser due to new options added
 echo "#include \"config.h\"" > util/configlexer.c || echo "Failed to create configlexer"
@@ -146,8 +145,9 @@ flex -i -t util/configlexer.lex >> util/configlexer.c  || echo "Failed to create
 yacc -y -d -o util/configparser.c util/configparser.y || echo "Failed to create configparser"
 
 %build
-%configure  --with-ldns= --with-libevent --with-pthreads --with-ssl \
+%configure  --with-libevent --with-pthreads --with-ssl \
             --disable-rpath --disable-static \
+            --enable-subnet --enable-ipsecmod \
             --with-conf-file=%{_sysconfdir}/%{name}/unbound.conf \
             --with-pidfile=%{_localstatedir}/run/%{name}/%{name}.pid \
 %if %{with_python}
@@ -161,6 +161,7 @@ yacc -y -d -o util/configparser.c util/configparser.y || echo "Failed to create 
 
 %install
 %{__make} DESTDIR=%{buildroot} install
+%{__make} DESTDIR=%{buildroot} unbound-event-install
 install -d 0755 %{buildroot}%{_unitdir} %{buildroot}%{_sysconfdir}/sysconfig
 install -p -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}/unbound.service
 install -p -m 0644 %{SOURCE7} %{buildroot}%{_unitdir}/unbound-keygen.service
@@ -185,6 +186,9 @@ done
 install -m 0755 streamtcp %{buildroot}%{_sbindir}/unbound-streamtcp
 # install streamtcp man page
 install -m 0644 testcode/streamtcp.1 %{buildroot}/%{_mandir}/man1/unbound-streamtcp.1
+
+install -D -m 0644 contrib/libunbound.pc %{buildroot}/%{_libdir}/pkgconfig/libunbound.pc
+
 
 # Install tmpfiles.d config
 install -d -m 0755 %{buildroot}%{_tmpfilesdir} %{buildroot}%{_sharedstatedir}/unbound
@@ -260,8 +264,10 @@ echo ".so man8/unbound-control.8" > %{buildroot}/%{_mandir}/man8/unbound-control
 %files devel
 %{_libdir}/libunbound.so
 %{_includedir}/unbound.h
+%{_includedir}/unbound-event.h
 %{_mandir}/man3/*
 %doc README
+%{_libdir}/pkgconfig/*.pc
 
 %files libs
 %attr(0755,root,root) %dir %{_sysconfdir}/%{name}
@@ -336,10 +342,26 @@ fi
 
 
 %check
-make check
-make longcheck
+%if %{with_test}
+  make check
+  make longcheck
+%endif
 
 %changelog
+* Wed Oct 11 2017 Petr Menšík <pemensik@redhat.com> - 1.6.6-1
+- Rebase to 1.6.6
+- Enable RFC 8145 Trust Anchor Signaling to help the root zone get keytag statistics
+- Enable ipsecmod support
+
+* Sun Sep 17 2017 Petr Menšík <pemensik@redhat.com> - 1.6.3-3
+- Update project website and ICANN key
+
+* Wed Aug 30 2017 Petr Menšík <pemensik@redhat.com> - 1.6.3-2
+- Install unbound-event.h
+
+* Fri Aug 18 2017 Petr Menšík <pemensik@redhat.com> - 1.6.3-1
+- Rebase to 1.6.3
+
 * Fri Jun 02 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-34
 - Make merge of updated database more safe
 

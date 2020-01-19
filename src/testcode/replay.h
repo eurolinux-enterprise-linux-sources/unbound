@@ -21,16 +21,16 @@
  * specific prior written permission.
  * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /**
@@ -129,7 +129,7 @@
 #ifndef TESTCODE_REPLAY_H
 #define TESTCODE_REPLAY_H
 #include "util/netevent.h"
-#include "testcode/ldns-testpkts.h"
+#include "testcode/testpkts.h"
 #include "util/rbtree.h"
 struct replay_answer;
 struct replay_moment;
@@ -138,6 +138,7 @@ struct fake_pending;
 struct fake_timer;
 struct replay_var;
 struct infra_cache;
+struct sldns_buffer;
 
 /**
  * A replay scenario.
@@ -217,12 +218,6 @@ struct replay_moment {
 	/** length of addr, if 0, then any address will do */
 	socklen_t addrlen;
 
-	/** what pending query should timeout or is answered. or 
-	 * NULL for last sent query. 
-	 * Unused at this time.
-	 */
-	ldns_rr* qname;
-
 	/** macro name, for assign. */
 	char* variable;
 	/** string argument, for assign. */
@@ -285,7 +280,7 @@ struct replay_runtime {
 	struct fake_timer* timer_list;
 
 	/** callback to call for incoming queries */
-	comm_point_callback_t* callback_query;
+	comm_point_callback_type* callback_query;
 	/** user argument for incoming query callback */
 	void *cb_arg;
 
@@ -293,7 +288,7 @@ struct replay_runtime {
 	struct infra_cache* infra;
 
 	/** the current time in seconds */
-	uint32_t now_secs;
+	time_t now_secs;
 	/** the current time in microseconds */
 	struct timeval now_tv;
 
@@ -310,7 +305,7 @@ struct replay_runtime {
 	/**
 	 * Tree of macro values. Of type replay_var
 	 */
-	rbtree_t* vars;
+	rbtree_type* vars;
 };
 
 /**
@@ -318,7 +313,7 @@ struct replay_runtime {
  */
 struct fake_pending {
 	/** what is important only that we remember the query, copied here. */
-	ldns_buffer* buffer;
+	struct sldns_buffer* buffer;
 	/** and to what address this is sent to. */
 	struct sockaddr_storage addr;
 	/** len of addr */
@@ -330,7 +325,7 @@ struct fake_pending {
 	/** qtype */
 	int qtype;
 	/** The callback function to call when answer arrives (or timeout) */
-	comm_point_callback_t* callback;
+	comm_point_callback_type* callback;
 	/** callback user argument */
 	void* cb_arg;
 	/** original timeout in seconds from 'then' */
@@ -338,8 +333,9 @@ struct fake_pending {
 
 	/** next in pending list */
 	struct fake_pending* next;
-	/** the buffer parsed into a ldns_pkt */
-	ldns_pkt* pkt;
+	/** the buffer parsed into a sldns_pkt */
+	uint8_t* pkt;
+	size_t pkt_len;
 	/** by what transport was the query sent out */
 	enum transport_type transport;
 	/** if this is a serviced query */
@@ -357,7 +353,8 @@ struct replay_answer {
 	/** reply information */
 	struct comm_reply repinfo;
 	/** the answer preparsed as ldns pkt */
-	ldns_pkt* pkt;
+	uint8_t* pkt;
+	size_t pkt_len;
 };
 
 /**
@@ -383,7 +380,7 @@ struct fake_timer {
  */
 struct replay_var {
 	/** rbtree node. Key is this structure. Sorted by name. */
-	rbnode_t node;
+	rbnode_type node;
 	/** the variable name */
 	char* name;
 	/** the variable value */
@@ -416,13 +413,13 @@ struct fake_timer* replay_get_oldest_timer(struct replay_runtime* runtime);
  * Create variable storage
  * @return new or NULL on failure.
  */
-rbtree_t* macro_store_create(void);
+rbtree_type* macro_store_create(void);
 
 /**
  * Delete variable storage
  * @param store: the macro storage to free up.
  */
-void macro_store_delete(rbtree_t* store);
+void macro_store_delete(rbtree_type* store);
 
 /**
  * Apply macro substitution to string.
@@ -431,7 +428,7 @@ void macro_store_delete(rbtree_t* store);
  * @param text: string to work on.
  * @return newly malloced string with result.
  */
-char* macro_process(rbtree_t* store, struct replay_runtime* runtime, 
+char* macro_process(rbtree_type* store, struct replay_runtime* runtime, 
 	char* text);
 
 /**
@@ -441,7 +438,7 @@ char* macro_process(rbtree_t* store, struct replay_runtime* runtime,
  * @return newly malloced string with result or strdup("") if not found.
  * 	or NULL on malloc failure.
  */
-char* macro_lookup(rbtree_t* store, char* name);
+char* macro_lookup(rbtree_type* store, char* name);
 
 /**
  * Set macro value.
@@ -450,10 +447,10 @@ char* macro_lookup(rbtree_t* store, char* name);
  * @param value: text to set it to.  Not expanded.
  * @return false on failure.
  */
-int macro_assign(rbtree_t* store, char* name, char* value);
+int macro_assign(rbtree_type* store, char* name, char* value);
 
 /** Print macro variables stored as debug info */
-void macro_print_debug(rbtree_t* store);
+void macro_print_debug(rbtree_type* store);
 
 /** testbounds self test */
 void testbound_selftest(void);
