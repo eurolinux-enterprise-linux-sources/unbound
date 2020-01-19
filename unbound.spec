@@ -11,7 +11,7 @@
 Summary: Validating, recursive, and caching DNS(SEC) resolver
 Name: unbound
 Version: 1.4.20
-Release: 19%{?dist}
+Release: 26%{?dist}
 License: BSD
 Url: http://www.nlnetlabs.nl/unbound/
 Source: http://www.unbound.net/downloads/%{name}-%{version}.tar.gz
@@ -30,11 +30,14 @@ Source11: block-example.com.conf
 Source12: icannbundle.pem
 Source13: root.anchor
 Source14: unbound.sysconfig
-Source15: unbound.cron
+Source15: unbound-anchor.timer
 Source16: unbound-munin.README
+Source17: unbound-anchor.service
+
 Patch1: unbound-1.4.20-roundrobin.patch
 Patch2: unbound-1.4.20-streamtcp-manpage.patch
 Patch3: unbound-1.4.20-coverity_scan.patch
+Patch4: unbound-1.4.20-CVE-2014-8602.patch
 
 Group: System Environment/Daemons
 BuildRequires: flex, openssl-devel , ldns-devel >= 1.6.13
@@ -46,9 +49,9 @@ BuildRequires: systemd-units
 # Required for SVN versions
 # BuildRequires: bison
 
-Requires(post): systemd-units
-Requires(preun): systemd-units
-Requires(postun): systemd-units
+Requires(post): systemd
+Requires(preun): systemd
+Requires(postun): systemd
 Requires: ldns >= 1.6.13
 Requires(pre): shadow-utils
 # Needed because /usr/sbin/unbound links unbound libs staticly
@@ -89,9 +92,19 @@ The devel package contains the unbound library and the include files
 Summary: Libraries used by the unbound server and client applications
 Group: Applications/System
 Requires(post): /sbin/ldconfig
+Requires(post): systemd
+Requires(preun): systemd
 Requires(postun): /sbin/ldconfig
+Requires(postun): systemd
 Requires: openssl >= 0.9.8g-12
-Requires: crontabs
+
+# needed to make sure the redhat-release-xxx contains the presets file
+# which enables unbound-anchor.timer.
+# See https://bugzilla.redhat.com/show_bug.cgi?id=1215645#c5
+Conflicts: redhat-release-server < 7.2-7
+Conflicts: redhat-release-workstation < 7.2-5
+Conflicts: redhat-release-computenode < 7.2-5
+Conflicts: redhat-release-client < 7.2-4
 
 %description libs
 Contains libraries used by the unbound server and client applications
@@ -111,6 +124,7 @@ Python modules and extensions for unbound
 %patch1 -p1
 %patch2 -p1
 %patch3 -p1
+%patch4 -p0
 
 %build
 %configure  --with-ldns= --with-libevent --with-pthreads --with-ssl \
@@ -131,17 +145,17 @@ Python modules and extensions for unbound
 install -d 0755 %{buildroot}%{_unitdir} %{buildroot}%{_sysconfdir}/sysconfig
 install -p -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}/unbound.service
 install -p -m 0644 %{SOURCE7} %{buildroot}%{_unitdir}/unbound-keygen.service
+install -p -m 0644 %{SOURCE15} %{buildroot}%{_unitdir}/unbound-anchor.timer
+install -p -m 0644 %{SOURCE17} %{buildroot}%{_unitdir}/unbound-anchor.service
 install -p -m 0755 %{SOURCE2} %{buildroot}%{_sysconfdir}/unbound
 install -p -m 0644 %{SOURCE12} %{buildroot}%{_sysconfdir}/unbound
-install -p -m 0644 %{SOURCE14}  %{buildroot}%{_sysconfdir}/sysconfig/unbound
-install -p -m 0644 %{SOURCE16}  .
-install -d 0755 %{buildroot}%{_sysconfdir}/cron.d
-install -p -m 0644 %{SOURCE15}   %{buildroot}%{_sysconfdir}/cron.d/unbound-anchor
+install -p -m 0644 %{SOURCE14} %{buildroot}%{_sysconfdir}/sysconfig/unbound
+install -p -m 0644 %{SOURCE16} .
 %if %{with_munin}
 # Install munin plugin and its softlinks
-install -d 0755 %{buildroot}%{_sysconfdir}/munin/plugin-conf.d
+install -d -m 0755 %{buildroot}%{_sysconfdir}/munin/plugin-conf.d
 install -p -m 0644 %{SOURCE3} %{buildroot}%{_sysconfdir}/munin/plugin-conf.d/unbound
-install -d 0755 %{buildroot}%{_datadir}/munin/plugins/
+install -d -m 0755 %{buildroot}%{_datadir}/munin/plugins/
 install -p -m 0755 %{SOURCE4} %{buildroot}%{_datadir}/munin/plugins/unbound
 for plugin in unbound_munin_hits unbound_munin_queue unbound_munin_memory unbound_munin_by_type unbound_munin_by_class unbound_munin_by_opcode unbound_munin_by_rcode unbound_munin_by_flags unbound_munin_histogram; do
     ln -s unbound %{buildroot}%{_datadir}/munin/plugins/$plugin
@@ -154,8 +168,8 @@ install -m 0755 streamtcp %{buildroot}%{_sbindir}/unbound-streamtcp
 install -m 0644 testcode/streamtcp.1 %{buildroot}/%{_mandir}/man1/unbound-streamtcp.1
 
 # Install tmpfiles.d config
-install -d -m 0755 %{buildroot}%{_sysconfdir}/tmpfiles.d/ %{buildroot}%{_sharedstatedir}/unbound
-install -m 0644 %{SOURCE8} %{buildroot}%{_sysconfdir}/tmpfiles.d/unbound.conf
+install -d -m 0755 %{buildroot}%{_tmpfilesdir} %{buildroot}%{_sharedstatedir}/unbound
+install -m 0644 %{SOURCE8} %{buildroot}%{_tmpfilesdir}/unbound.conf
 
 # install root and DLV key - we keep a copy of the root key in old location,
 # in case user has changed the configuration and we wouldn't update it there
@@ -191,7 +205,7 @@ echo ".so man8/unbound-control.8" > %{buildroot}/%{_mandir}/man8/unbound-control
 %{_unitdir}/%{name}.service
 %{_unitdir}/%{name}-keygen.service
 %attr(0755,unbound,unbound) %dir %{_localstatedir}/run/%{name}
-%config(noreplace) %{_sysconfdir}/tmpfiles.d/unbound.conf
+%attr(0644,root,root) %{_tmpfilesdir}/unbound.conf
 %attr(0644,root,root) %config(noreplace) %{_sysconfdir}/%{name}/unbound.conf
 %attr(0644,root,root) %config(noreplace) %{_sysconfdir}/sysconfig/%{name}
 %dir %attr(0755,root,unbound) %{_sysconfdir}/%{name}/keys.d
@@ -235,7 +249,8 @@ echo ".so man8/unbound-control.8" > %{buildroot}/%{_mandir}/man8/unbound-control
 %{_sbindir}/unbound-anchor
 %{_libdir}/libunbound.so.*
 %{_sysconfdir}/%{name}/icannbundle.pem
-%attr(0644,root,root) %{_sysconfdir}/cron.d/unbound-anchor
+%{_unitdir}/unbound-anchor.timer
+%{_unitdir}/unbound-anchor.service
 %dir %attr(0755,unbound,unbound) %{_sharedstatedir}/%{name}
 %attr(0644,unbound,unbound) %config(noreplace) %{_sharedstatedir}/%{name}/root.key
 %attr(0644,root,root) %config(noreplace) %{_sysconfdir}/%{name}/dlv.isc.org.key
@@ -257,16 +272,24 @@ exit 0
 %post libs 
 /sbin/ldconfig
 %{_sbindir}/runuser  --command="%{_sbindir}/unbound-anchor -a %{_sharedstatedir}/unbound/root.key -c %{_sysconfdir}/unbound/icannbundle.pem"  --shell /bin/sh unbound ||:
+%systemd_post unbound-anchor.timer
+# the Unit is in presets, but would be started afte reboot
+/bin/systemctl start unbound-anchor.timer >/dev/null 2>&1 || :
 
 %preun
 %systemd_preun unbound.service
 %systemd_preun unbound-keygen.service
 
+%preun libs
+%systemd_preun unbound-anchor.timer
+
 %postun 
 %systemd_postun_with_restart unbound.service
 %systemd_postun unbound-keygen.service
 
-%postun libs -p /sbin/ldconfig
+%postun libs
+/sbin/ldconfig
+%systemd_postun_with_restart unbound-anchor.timer
 
 %triggerun -- unbound < 1.4.12-4
 # Save the current service runlevel info
@@ -280,6 +303,28 @@ exit 0
 /bin/systemctl try-restart unbound-keygen.service >/dev/null 2>&1 || :
 
 %changelog
+* Tue Sep 22 2015 Tomas Hozza <thozza@redhat.com> - 1.4.20-26
+- Added Conficts on redhat-release packages without unbound-anchor.timer in presets (Related #1215645)
+
+* Tue Sep 15 2015 Tomas Hozza <thozza@redhat.com> - 1.4.20-25
+- Resolve ordering loop with nss-lookup.target and ntpdate (#1259806)
+
+* Wed Aug 19 2015 Tomas Hozza <thozza@redhat.com> - 1.4.20-24
+- Fix CVE-2014-8602 (#1253961)
+
+* Tue May 26 2015 Tomas Hozza <thozza@redhat.com> - 1.4.20-23
+- Removed usage of DLV from the default configuration (#1223339)
+
+* Wed May 13 2015 Tomas Hozza <thozza@redhat.com> - 1.4.20-22
+- unbound.service now Wants unbound-anchor.timer (Related: #1180267)
+
+* Tue May 12 2015 Tomas Hozza <thozza@redhat.com> - 1.4.20-21
+- Fix dependencies and minor scriptlet issues due to systemd timer unit (Related: #1180267)
+
+* Mon Apr 27 2015 Tomas Hozza <thozza@redhat.com> - 1.4.20-20
+- Install tmpfiles configuration into /usr/lib/tmpfiles.d (#1180995)
+- Fix root key management to comply to RFC5011 (#1180267)
+
 * Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 1.4.20-19
 - Mass rebuild 2014-01-24
 
