@@ -11,7 +11,7 @@
 Summary: Validating, recursive, and caching DNS(SEC) resolver
 Name: unbound
 Version: 1.4.20
-Release: 26%{?dist}
+Release: 28%{?dist}
 License: BSD
 Url: http://www.nlnetlabs.nl/unbound/
 Source: http://www.unbound.net/downloads/%{name}-%{version}.tar.gz
@@ -40,7 +40,7 @@ Patch3: unbound-1.4.20-coverity_scan.patch
 Patch4: unbound-1.4.20-CVE-2014-8602.patch
 
 Group: System Environment/Daemons
-BuildRequires: flex, openssl-devel , ldns-devel >= 1.6.13
+BuildRequires: flex, openssl-devel , ldns-devel >= 1.6.16-10
 BuildRequires: libevent-devel expat-devel
 %if %{with_python}
 BuildRequires:  python-devel swig
@@ -52,7 +52,7 @@ BuildRequires: systemd-units
 Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd
-Requires: ldns >= 1.6.13
+Requires: ldns >= 1.6.16-10
 Requires(pre): shadow-utils
 # Needed because /usr/sbin/unbound links unbound libs staticly
 Requires: %{name}-libs%{?_isa} = %{version}-%{release}
@@ -134,7 +134,7 @@ Python modules and extensions for unbound
 %if %{with_python}
             --with-pythonmodule --with-pyunbound \
 %endif
-            --enable-sha2 --disable-gost --disable-ecdsa \
+            --enable-sha2 --disable-gost --enable-ecdsa \
             --with-rootkey-file=%{_sharedstatedir}/unbound/root.key
 
 %{__make} %{?_smp_mflags}
@@ -303,6 +303,12 @@ exit 0
 /bin/systemctl try-restart unbound-keygen.service >/dev/null 2>&1 || :
 
 %changelog
+* Fri May 20 2016 Pavel Šimerda <psimerda@redhat.com> - 1.4.20-28
+- Related: #1245250 - depend on the right ldns version
+
+* Thu May 19 2016 Pavel Šimerda <psimerda@redhat.com> - 1.4.20-27
+- Resolves: #1245250 - enable ecdsa
+
 * Tue Sep 22 2015 Tomas Hozza <thozza@redhat.com> - 1.4.20-26
 - Added Conficts on redhat-release packages without unbound-anchor.timer in presets (Related #1215645)
 
