@@ -11,7 +11,7 @@
 Summary: Validating, recursive, and caching DNS(SEC) resolver
 Name: unbound
 Version: 1.4.20
-Release: 28%{?dist}
+Release: 34%{?dist}
 License: BSD
 Url: http://www.nlnetlabs.nl/unbound/
 Source: http://www.unbound.net/downloads/%{name}-%{version}.tar.gz
@@ -38,9 +38,16 @@ Patch1: unbound-1.4.20-roundrobin.patch
 Patch2: unbound-1.4.20-streamtcp-manpage.patch
 Patch3: unbound-1.4.20-coverity_scan.patch
 Patch4: unbound-1.4.20-CVE-2014-8602.patch
+Patch5: unbound-1.4.20-cache-max-negative-ttl.patch
+Patch6: unbound-1.4.20-longcheck-fixup.patch
+Patch7: unbound-1.4.20-trust-anchor.patch
 
 Group: System Environment/Daemons
-BuildRequires: flex, openssl-devel , ldns-devel >= 1.6.16-10
+BuildRequires: openssl-devel , ldns-devel >= 1.6.16-10
+# needed for the test suite
+BuildRequires: bind-utils
+# needed to regenerate configparser
+BuildRequires: flex, byacc
 BuildRequires: libevent-devel expat-devel
 %if %{with_python}
 BuildRequires:  python-devel swig
@@ -93,6 +100,9 @@ Summary: Libraries used by the unbound server and client applications
 Group: Applications/System
 Requires(post): /sbin/ldconfig
 Requires(post): systemd
+Requires(post): grep
+Requires(post): sed
+Requires(post): util-linux
 Requires(preun): systemd
 Requires(postun): /sbin/ldconfig
 Requires(postun): systemd
@@ -125,6 +135,15 @@ Python modules and extensions for unbound
 %patch2 -p1
 %patch3 -p1
 %patch4 -p0
+%patch5 -p1 -b .cache-max-negative-ttl
+%patch6 -p1 -b .longcheck-fixup
+%patch7 -p1 -b .root-anchor
+
+# regrnerate config parser due to new options added
+echo "#include \"config.h\"" > util/configlexer.c || echo "Failed to create configlexer"
+echo "#include \"util/configyyrename.h\"" >> util/configlexer.c || echo "Failed to create configlexer"
+flex -i -t util/configlexer.lex >> util/configlexer.c  || echo "Failed to create configlexer"
+yacc -y -d -o util/configparser.c util/configparser.y || echo "Failed to create configparser"
 
 %build
 %configure  --with-ldns= --with-libevent --with-pthreads --with-ssl \
@@ -252,6 +271,7 @@ echo ".so man8/unbound-control.8" > %{buildroot}/%{_mandir}/man8/unbound-control
 %{_unitdir}/unbound-anchor.timer
 %{_unitdir}/unbound-anchor.service
 %dir %attr(0755,unbound,unbound) %{_sharedstatedir}/%{name}
+# this file will be modified always after installation
 %attr(0644,unbound,unbound) %config(noreplace) %{_sharedstatedir}/%{name}/root.key
 %attr(0644,root,root) %config(noreplace) %{_sysconfdir}/%{name}/dlv.isc.org.key
 # just left for backwards compat with user changed unbound.conf files - format is different!
@@ -271,6 +291,18 @@ exit 0
 
 %post libs 
 /sbin/ldconfig
+# If update contains new keys not already in database, use package keys
+if [ "$1" -eq 2 -a -f %{_sharedstatedir}/unbound/root.key.rpmnew ]; then
+        /sbin/runuser --command="
+	cp -pf %{_sharedstatedir}/unbound/root.key %{_sharedstatedir}/unbound/root.key.rpmupdate && \
+	sed -e 's/;.*//' -e '/^[[:space:]]*$/ d' %{_sharedstatedir}/unbound/root.key.rpmnew | while read KEY;
+	do
+		if ! grep -q \"\$KEY\" %{_sharedstatedir}/unbound/root.key.rpmupdate; then
+			echo \"\$KEY\" >> %{_sharedstatedir}/unbound/root.key.rpmupdate || exit 1;
+		fi;
+	done && \
+	mv %{_sharedstatedir}/unbound/root.key.rpmupdate %{_sharedstatedir}/unbound/root.key" --shell /bin/sh unbound || :
+fi
 %{_sbindir}/runuser  --command="%{_sbindir}/unbound-anchor -a %{_sharedstatedir}/unbound/root.key -c %{_sysconfdir}/unbound/icannbundle.pem"  --shell /bin/sh unbound ||:
 %systemd_post unbound-anchor.timer
 # the Unit is in presets, but would be started afte reboot
@@ -302,7 +334,31 @@ exit 0
 /bin/systemctl try-restart unbound.service >/dev/null 2>&1 || :
 /bin/systemctl try-restart unbound-keygen.service >/dev/null 2>&1 || :
 
+
+%check
+make check
+make longcheck
+
 %changelog
+* Fri Jun 02 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-34
+- Make merge of updated database more safe
+
+* Wed May 24 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-33
+- Update also built-in digest in unbound-anchor
+
+* Wed May 24 2017 Petr Menšík <pemensik@redhat.com> - 1.4.20-32
+- Update trust anchors (#1452636)
+- Update managed keys from trigger
+
+* Mon Mar 27 2017 Tomas Hozza <thozza@redhat.com> - 1.4.20-31
+- Run internal test suite during build (#1383722)
+
+* Thu Feb 02 2017 Tomas Hozza <thozza@redhat.com> - 1.4.20-30
+- Added cache-max-negative-ttl option to the default configuration file (#1382383)
+
+* Tue Oct 11 2016 Tomas Hozza <thozza@redhat.com> - 1.4.20-29
+- Added cache-max-negative-ttl option (#1382383)
+
 * Fri May 20 2016 Pavel Šimerda <psimerda@redhat.com> - 1.4.20-28
 - Related: #1245250 - depend on the right ldns version
 
